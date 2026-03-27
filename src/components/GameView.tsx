@@ -210,7 +210,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     gs.stats.conflicts = 0;
     gs.stats.reExecutions = 0;
     gs.completionStats = null;
-    gs.mode = 'demo'; // will auto-switch back to 'ws' on first event via pushEvent
+    gs.mode = 'ws'; // immediately switch to ws mode — no demo blocks during server compile
     completionStatsRef.current = null;
     pendingCompletionRef.current = null;
 

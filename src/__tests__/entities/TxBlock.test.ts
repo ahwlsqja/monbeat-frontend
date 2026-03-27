@@ -97,7 +97,7 @@ describe('TxBlock', () => {
     it('should return false when above commit zone', () => {
       const block = new TxBlock();
       block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT);
-      // y = -20, commitZoneY = 510
+      // y = -28, commitZoneY = 510
       expect(block.isAtCommitZone()).toBe(false);
     });
 
@@ -118,7 +118,7 @@ describe('TxBlock', () => {
     it('should detect commit zone after sufficient updates', () => {
       const block = new TxBlock();
       block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT);
-      // commitZoneY = 510, start at -20, speed = 200 px/s
+      // commitZoneY = 510, start at -28, speed = 200 px/s
       // Need (510 + 20) / 200 = 2.65 seconds
       for (let i = 0; i < 27; i++) {
         block.update(0.1); // 2.7 seconds
@@ -139,7 +139,7 @@ describe('TxBlock', () => {
       expect(block.x).toBe(0);
       expect(block.y).toBe(0);
       expect(block.width).toBe(0);
-      expect(block.height).toBe(20);
+      expect(block.height).toBe(28);
       expect(block.lane).toBe(0);
       expect(block.state).toBe('falling');
       expect(block.color).toBe('#4ade80'); // EVENT_COLORS[TxCommit]
@@ -158,7 +158,7 @@ describe('TxBlock', () => {
       const laneWidth = 1000 / 4;
       expect(block.lane).toBe(3);
       expect(block.x).toBe(3 * laneWidth + laneWidth * 0.2);
-      expect(block.y).toBe(-20);
+      expect(block.y).toBe(-28);
       expect(block.commitZoneY).toBe(800 * 0.85);
     });
   });

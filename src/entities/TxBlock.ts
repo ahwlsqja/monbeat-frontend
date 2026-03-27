@@ -20,7 +20,7 @@ export class TxBlock implements Poolable {
   x = 0;
   y = 0;
   width = 0;
-  height = 20;
+  height = 28;
   lane = 0;
   state: TxBlockState = 'falling';
   color = DEFAULT_COLOR;
@@ -38,7 +38,7 @@ export class TxBlock implements Poolable {
     const laneWidth = canvasWidth / 4;
     this.lane = lane;
     this.width = laneWidth * 0.6;
-    this.height = 20;
+    this.height = 28;
     this.x = lane * laneWidth + laneWidth * 0.2;
     this.y = -this.height; // start above viewport
     this.speed = 200;
@@ -71,7 +71,7 @@ export class TxBlock implements Poolable {
     this.x = 0;
     this.y = 0;
     this.width = 0;
-    this.height = 20;
+    this.height = 28;
     this.lane = 0;
     this.state = 'falling';
     this.eventType = GameEventType.TxCommit;
