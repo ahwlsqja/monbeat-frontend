@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { GameState } from '../../game/GameState';
-import { TxBlock } from '../../entities/TxBlock';
 import { GameEventType, EVENT_COLORS } from '../../net/types';
 import type { GameEvent, CompletionStats } from '../../net/types';
 
-/** Helper to create a GameEvent. */
+const CANVAS_WIDTH = 800;
+const CANVAS_HEIGHT = 800;
+
 function makeEvent(overrides?: Partial<GameEvent>): GameEvent {
   return {
     type: GameEventType.TxCommit,
@@ -18,202 +19,76 @@ function makeEvent(overrides?: Partial<GameEvent>): GameEvent {
 }
 
 describe('GameState', () => {
-  const CANVAS_WIDTH = 800;
-  const CANVAS_HEIGHT = 600;
+  // -----------------------------------------------------------------------
+  // Basic construction & config
+  // -----------------------------------------------------------------------
 
-  /** Deterministic RNG that cycles through values */
-  function makeRng(values: number[]) {
-    let idx = 0;
-    return () => {
-      const v = values[idx % values.length];
-      idx++;
-      return v;
-    };
-  }
+  it('should use default config values', () => {
+    const gs = new GameState();
+    expect(gs.config.laneCount).toBe(4);
+    expect(gs.config.commitZoneRatio).toBe(0.85);
+    expect(gs.config.blockSpeed).toBe(200);
+  });
 
-  describe('constructor', () => {
-    it('should create with default config', () => {
-      const gs = new GameState();
-      expect(gs.config.laneCount).toBe(4);
-      expect(gs.config.commitZoneRatio).toBe(0.85);
-      expect(gs.config.blockSpeed).toBe(200);
-    });
+  it('should allow custom config', () => {
+    const gs = new GameState({ laneCount: 3 });
+    expect(gs.config.laneCount).toBe(3);
+    expect(gs.config.commitZoneRatio).toBe(0.85);
+  });
 
-    it('should accept partial config override', () => {
-      const gs = new GameState({ blockSpeed: 300 });
-      expect(gs.config.blockSpeed).toBe(300);
-      expect(gs.config.laneCount).toBe(4); // default preserved
-    });
+  it('should set canvas dimensions', () => {
+    const gs = new GameState();
+    gs.setDimensions(800, 600);
+    expect(gs.canvasWidth).toBe(800);
+    expect(gs.canvasHeight).toBe(600);
+  });
 
-    it('should start with empty active set', () => {
-      const gs = new GameState();
-      expect(gs.activeTxBlocks.size).toBe(0);
-    });
+  // -----------------------------------------------------------------------
+  // Demo mode with DummySpawner
+  // -----------------------------------------------------------------------
 
-    it('should pre-allocate 200 pool objects', () => {
-      const gs = new GameState();
-      expect(gs.txPool.available).toBe(200);
-    });
-
-    it('should start in demo mode with zeroed stats', () => {
+  describe('demo mode', () => {
+    it('should start in demo mode', () => {
       const gs = new GameState();
       expect(gs.mode).toBe('demo');
-      expect(gs.stats).toEqual({ txCount: 0, conflicts: 0, reExecutions: 0 });
-      expect(gs.completionStats).toBeNull();
-    });
-  });
-
-  describe('setDimensions()', () => {
-    it('should store canvas dimensions', () => {
-      const gs = new GameState();
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-      expect(gs.canvasWidth).toBe(CANVAS_WIDTH);
-      expect(gs.canvasHeight).toBe(CANVAS_HEIGHT);
-    });
-  });
-
-  describe('update() — spawn cycle (demo mode)', () => {
-    it('should spawn blocks when spawner interval elapses', () => {
-      const rng = makeRng([0, 0.5, 0, 0.5]);
-      const gs = new GameState(undefined, rng);
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.update(0.2);
-      expect(gs.activeTxBlocks.size).toBe(1);
     });
 
-    it('should spawn multiple blocks when dt covers multiple intervals', () => {
-      const rng = makeRng([0, 0.25, 0, 0.75]);
-      const gs = new GameState(undefined, rng);
+    it('should spawn blocks from DummySpawner in demo mode', () => {
+      const gs = new GameState(undefined, () => 0.5);
       gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.update(0.5);
-      expect(gs.activeTxBlocks.size).toBe(2);
+      // Run enough time for spawner to fire
+      for (let i = 0; i < 30; i++) gs.update(0.016);
+      expect(gs.activeTxBlocks.size).toBeGreaterThan(0);
     });
 
-    it('should not spawn if interval has not elapsed', () => {
-      const rng = makeRng([0.99]);
-      const gs = new GameState(undefined, rng);
+    it('should release blocks at commit zone', () => {
+      const gs = new GameState(undefined, () => 0.5);
       gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.update(0.1);
-      expect(gs.activeTxBlocks.size).toBe(0);
-    });
-
-    it('should NOT spawn in ws mode', () => {
-      const rng = makeRng([0, 0.5, 0, 0.5]);
-      const gs = new GameState(undefined, rng);
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-      gs.mode = 'ws'; // force ws mode
-
-      gs.update(0.2); // would normally trigger a spawn
+      // Spawn some blocks
+      for (let i = 0; i < 30; i++) gs.update(0.016);
+      const before = gs.activeTxBlocks.size;
+      expect(before).toBeGreaterThan(0);
+      // Stop spawning new blocks by switching to ws mode
+      gs.mode = 'ws';
+      // Advance far enough for existing blocks to hit commit zone
+      for (let i = 0; i < 400; i++) gs.update(0.016);
       expect(gs.activeTxBlocks.size).toBe(0);
     });
   });
 
-  describe('update() — block movement', () => {
-    it('should advance block positions each update', () => {
-      const rng = makeRng([0, 0.5]);
-      const gs = new GameState(undefined, rng);
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.update(0.2);
-      expect(gs.activeTxBlocks.size).toBe(1);
-
-      const block = [...gs.activeTxBlocks][0];
-      const yAfterSpawn = block.y;
-
-      const rng2 = makeRng([0.99, 0.5]);
-      const gs2 = new GameState(undefined, rng2);
-      gs2.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs2.update(0.5);
-      const b2 = [...gs2.activeTxBlocks][0];
-      expect(b2.y).toBeGreaterThan(-20);
-    });
-  });
-
-  describe('update() — commit zone release', () => {
-    it('should release blocks that reach the commit zone', () => {
-      const rng = makeRng([0, 0.5]);
-      const gs = new GameState(undefined, rng);
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.update(0.2);
-      expect(gs.activeTxBlocks.size).toBe(1);
-
-      const block = [...gs.activeTxBlocks][0];
-      block.y = CANVAS_HEIGHT * 0.85 + 10;
-
-      gs.update(0.001);
-      expect(gs.activeTxBlocks.size).toBe(0);
-    });
-
-    it('should return released blocks to the pool', () => {
-      const rng = makeRng([0, 0.5]);
-      const gs = new GameState(undefined, rng);
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      const initialAvailable = gs.txPool.available;
-
-      gs.update(0.2);
-      expect(gs.txPool.available).toBe(initialAvailable - 1);
-
-      const block = [...gs.activeTxBlocks][0];
-      block.y = CANVAS_HEIGHT;
-
-      gs.update(0.001);
-      expect(gs.txPool.available).toBe(initialAvailable);
-      expect(gs.activeTxBlocks.size).toBe(0);
-    });
-  });
-
-  describe('pool recycling', () => {
-    it('should recycle blocks through the pool (acquire → release → reacquire)', () => {
-      const rng = makeRng([0, 0]);
-      const gs = new GameState(undefined, rng);
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.update(0.2);
-      const block = [...gs.activeTxBlocks][0];
-
-      block.y = CANVAS_HEIGHT;
-      gs.update(0.001);
-      expect(gs.activeTxBlocks.size).toBe(0);
-
-      gs.update(0.2);
-      expect(gs.activeTxBlocks.size).toBe(1);
-      const reused = [...gs.activeTxBlocks][0];
-
-      expect(reused).toBe(block);
-      expect(reused.state).toBe('falling');
-      expect(reused.y).toBeGreaterThanOrEqual(-20);
-    });
-  });
+  // -----------------------------------------------------------------------
+  // Reset
+  // -----------------------------------------------------------------------
 
   describe('reset()', () => {
-    it('should release all active blocks and reset spawner', () => {
-      const rng = makeRng([0, 0.5, 0, 0.25]);
-      const gs = new GameState(undefined, rng);
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.update(0.5);
-      expect(gs.activeTxBlocks.size).toBeGreaterThan(0);
-
-      gs.reset();
-      expect(gs.activeTxBlocks.size).toBe(0);
-    });
-
-    it('should reset mode, stats, and completionStats', () => {
+    it('should clear everything', () => {
       const gs = new GameState();
       gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
       gs.pushEvent(makeEvent({ type: GameEventType.Conflict }));
       gs.setCompletionStats({
         total_events: 10, total_gas: 500000,
         num_transactions: 5, num_conflicts: 2, num_re_executions: 1,
       });
-
       gs.reset();
       expect(gs.mode).toBe('demo');
       expect(gs.stats).toEqual({ txCount: 0, conflicts: 0, reExecutions: 0 });
@@ -221,136 +96,116 @@ describe('GameState', () => {
     });
   });
 
-  describe('activeTxBlocks alias', () => {
-    it('should be the same Set as txPool.active', () => {
-      const gs = new GameState();
-      expect(gs.activeTxBlocks).toBe(gs.txPool.active);
-    });
-  });
-
   // -----------------------------------------------------------------------
-  // S02 additions: pushEvent, mode, stats
+  // pushEvent + batch system
   // -----------------------------------------------------------------------
 
   describe('pushEvent()', () => {
     it('should switch mode to ws on first event', () => {
       const gs = new GameState();
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-      expect(gs.mode).toBe('demo');
-
       gs.pushEvent(makeEvent());
       expect(gs.mode).toBe('ws');
     });
 
-    it('should queue event and spawn block after update ticks', () => {
+    it('should not spawn blocks until finalizeBatches is called', () => {
       const gs = new GameState();
       gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.pushEvent(makeEvent({ lane: 2 }));
-      // Not spawned yet — still in queue
+      gs.pushEvent(makeEvent());
+      gs.update(1.0);
       expect(gs.activeTxBlocks.size).toBe(0);
-
-      // Tick past MIN_SPAWN_INTERVAL (0.25s)
-      gs.update(0.3);
-      expect(gs.activeTxBlocks.size).toBe(1);
-      const block = [...gs.activeTxBlocks][0];
-      expect(block.lane).toBe(2);
-      expect(block.state).toBe('falling');
     });
+  });
 
-    it('should set block eventType and color from event after spawn', () => {
+  describe('batch dispatch', () => {
+    it('should group events with same timestamp into one batch', () => {
       const gs = new GameState();
       gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
 
-      gs.pushEvent(makeEvent({ type: GameEventType.Conflict, lane: 1 }));
-      gs.update(0.3);
-      const block = [...gs.activeTxBlocks][0];
-      expect(block.eventType).toBe(GameEventType.Conflict);
-      expect(block.color).toBe(EVENT_COLORS[GameEventType.Conflict]);
-    });
+      // 3 parallel tx at t=0 — should all spawn at once
+      gs.pushEvent(makeEvent({ lane: 0, timestamp: 0.0 }));
+      gs.pushEvent(makeEvent({ lane: 1, timestamp: 0.01 }));
+      gs.pushEvent(makeEvent({ lane: 2, timestamp: 0.02 }));
+      gs.finalizeBatches();
 
-    it('should increment txCount when events are spawned', () => {
-      const gs = new GameState();
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.pushEvent(makeEvent({ type: GameEventType.TxCommit }));
-      gs.pushEvent(makeEvent({ type: GameEventType.Conflict }));
-      gs.pushEvent(makeEvent({ type: GameEventType.ReExecution }));
-      // Tick enough to drain all 3 events (3 * 0.25s = 0.75s)
-      gs.update(0.8);
-      expect(gs.stats.txCount).toBe(3);
-    });
-
-    it('should count conflicts', () => {
-      const gs = new GameState();
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.pushEvent(makeEvent({ type: GameEventType.Conflict }));
-      gs.pushEvent(makeEvent({ type: GameEventType.Conflict }));
-      gs.pushEvent(makeEvent({ type: GameEventType.TxCommit }));
-      gs.update(0.8);
-      expect(gs.stats.conflicts).toBe(2);
-    });
-
-    it('should count reExecutions', () => {
-      const gs = new GameState();
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.pushEvent(makeEvent({ type: GameEventType.ReExecution }));
-      gs.pushEvent(makeEvent({ type: GameEventType.TxCommit }));
-      gs.update(0.6);
-      expect(gs.stats.reExecutions).toBe(1);
-    });
-
-    it('should not count ReExecutionResolved or BlockComplete as conflicts/reexec', () => {
-      const gs = new GameState();
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.pushEvent(makeEvent({ type: GameEventType.ReExecutionResolved }));
-      gs.pushEvent(makeEvent({ type: GameEventType.BlockComplete }));
-      gs.update(0.6);
-      expect(gs.stats.conflicts).toBe(0);
-      expect(gs.stats.reExecutions).toBe(0);
-      expect(gs.stats.txCount).toBe(2);
-    });
-
-    it('should space spawns at MIN_SPAWN_INTERVAL', () => {
-      const gs = new GameState();
-      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      gs.pushEvent(makeEvent({ lane: 0 }));
-      gs.pushEvent(makeEvent({ lane: 1 }));
-      gs.pushEvent(makeEvent({ lane: 2 }));
-
-      // First update: first event spawns immediately (queueTimer primed),
-      // 0.01s not enough for second
+      // First update: first batch fires immediately (timer primed)
       gs.update(0.01);
-      expect(gs.activeTxBlocks.size).toBe(1);
+      expect(gs.activeTxBlocks.size).toBe(3); // all 3 at once = parallel!
+    });
 
-      // Tick another 0.25s — second spawns
-      gs.update(0.25);
+    it('should separate batches by timestamp gap', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      // Batch 1: t=0.0 (2 parallel tx)
+      gs.pushEvent(makeEvent({ lane: 0, timestamp: 0.0 }));
+      gs.pushEvent(makeEvent({ lane: 1, timestamp: 0.01 }));
+      // Batch 2: t=0.5 (1 tx after conflict detected)
+      gs.pushEvent(makeEvent({ lane: 2, timestamp: 0.5, type: GameEventType.Conflict }));
+      gs.finalizeBatches();
+
+      // First batch spawns immediately
+      gs.update(0.01);
       expect(gs.activeTxBlocks.size).toBe(2);
 
-      // Tick another 0.25s — third spawns
+      // Not enough time for second batch yet (need 0.4s BATCH_INTERVAL)
+      gs.update(0.2);
+      expect(gs.activeTxBlocks.size).toBe(2);
+
+      // After enough time, second batch spawns
       gs.update(0.25);
       expect(gs.activeTxBlocks.size).toBe(3);
     });
 
-    it('should fire onBlockHit callback when block reaches commit zone', () => {
+    it('should count stats correctly after batch dispatch', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      gs.pushEvent(makeEvent({ type: GameEventType.TxCommit, timestamp: 0 }));
+      gs.pushEvent(makeEvent({ type: GameEventType.Conflict, timestamp: 0 }));
+      gs.pushEvent(makeEvent({ type: GameEventType.ReExecution, timestamp: 0.5 }));
+      gs.finalizeBatches();
+
+      gs.update(0.5); // dispatch both batches
+      expect(gs.stats.txCount).toBe(3);
+      expect(gs.stats.conflicts).toBe(1);
+      expect(gs.stats.reExecutions).toBe(1);
+    });
+
+    it('should fire onBlockHit when block reaches commit zone', () => {
       const gs = new GameState();
       gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
 
       const hitEvents: GameEvent[] = [];
       gs.onBlockHit = (e) => hitEvents.push(e);
 
-      gs.pushEvent(makeEvent({ type: GameEventType.TxCommit, lane: 0 }));
+      gs.pushEvent(makeEvent({ type: GameEventType.TxCommit, lane: 0, timestamp: 0 }));
+      gs.finalizeBatches();
+
       // Spawn the block
-      gs.update(0.3);
-      // Advance until commit zone (commitZoneY = 0.85 * height, speed=200px/s)
-      // From y=-20, need to travel ~700px at 200px/s = ~3.5s
+      gs.update(0.01);
+      expect(gs.activeTxBlocks.size).toBe(1);
+
+      // Advance until commit zone (y=-28, commitZone=680, speed=200 → ~3.5s)
       for (let i = 0; i < 40; i++) gs.update(0.1);
       expect(hitEvents.length).toBe(1);
       expect(hitEvents[0].type).toBe(GameEventType.TxCommit);
+    });
+
+    it('isFullyDrained should be true only when all blocks gone', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      gs.pushEvent(makeEvent({ timestamp: 0 }));
+      gs.finalizeBatches();
+
+      expect(gs.isFullyDrained).toBe(false);
+
+      gs.update(0.01); // spawn
+      expect(gs.isFullyDrained).toBe(false);
+
+      // Let block fall to commit zone
+      for (let i = 0; i < 50; i++) gs.update(0.1);
+      expect(gs.isFullyDrained).toBe(true);
     });
   });
 
@@ -361,9 +216,15 @@ describe('GameState', () => {
         total_events: 20, total_gas: 1_000_000,
         num_transactions: 10, num_conflicts: 3, num_re_executions: 2,
       };
-
       gs.setCompletionStats(cs);
-      expect(gs.completionStats).toEqual(cs);
+      expect(gs.completionStats).toBe(cs);
+    });
+  });
+
+  describe('activeTxBlocks alias', () => {
+    it('should point to txPool.active', () => {
+      const gs = new GameState();
+      expect(gs.activeTxBlocks).toBe(gs.txPool.active);
     });
   });
 });

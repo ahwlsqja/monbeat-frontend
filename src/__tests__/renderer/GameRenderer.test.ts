@@ -16,13 +16,15 @@ function makeEvent(overrides?: Partial<GameEvent>): GameEvent {
   };
 }
 
-/**
- * Minimal CanvasRenderingContext2D mock that records drawing operations.
- */
-function mockCtx() {
-  const fillCalls: string[] = []; // fillStyle at time of fill()
-  let currentFillStyle = '';
+function spawnBlocks(gs: GameState, events: Partial<GameEvent>[]) {
+  for (const e of events) gs.pushEvent(makeEvent(e));
+  gs.finalizeBatches();
+  gs.update(0.01); // dispatch first batch
+}
 
+function mockCtx() {
+  const fillCalls: string[] = [];
+  let currentFillStyle = '';
   return {
     clearRect: vi.fn(),
     get fillStyle() { return currentFillStyle; },
@@ -67,11 +69,11 @@ describe('GameRenderer', () => {
   it('should draw blocks with correct colors per event type', () => {
     const gs = new GameState();
     gs.setDimensions(W, H);
-
-    gs.pushEvent(makeEvent({ type: GameEventType.TxCommit, lane: 0 }));
-    gs.pushEvent(makeEvent({ type: GameEventType.Conflict, lane: 1 }));
-    gs.pushEvent(makeEvent({ type: GameEventType.TxCommit, lane: 2 }));
-    gs.update(0.8);
+    spawnBlocks(gs, [
+      { type: GameEventType.TxCommit, lane: 0, timestamp: 0 },
+      { type: GameEventType.Conflict, lane: 1, timestamp: 0 },
+      { type: GameEventType.TxCommit, lane: 2, timestamp: 0 },
+    ]);
 
     const ctx = mockCtx();
     renderFrame(ctx, W, H, gs, 1);
@@ -85,13 +87,13 @@ describe('GameRenderer', () => {
   it('should render all 5 event type colors', () => {
     const gs = new GameState();
     gs.setDimensions(W, H);
-
-    gs.pushEvent(makeEvent({ type: GameEventType.TxCommit, lane: 0 }));
-    gs.pushEvent(makeEvent({ type: GameEventType.Conflict, lane: 1 }));
-    gs.pushEvent(makeEvent({ type: GameEventType.ReExecution, lane: 2 }));
-    gs.pushEvent(makeEvent({ type: GameEventType.ReExecutionResolved, lane: 3 }));
-    gs.pushEvent(makeEvent({ type: GameEventType.BlockComplete, lane: 0 }));
-    gs.update(1.5);
+    spawnBlocks(gs, [
+      { type: GameEventType.TxCommit, lane: 0, timestamp: 0 },
+      { type: GameEventType.Conflict, lane: 1, timestamp: 0 },
+      { type: GameEventType.ReExecution, lane: 2, timestamp: 0 },
+      { type: GameEventType.ReExecutionResolved, lane: 3, timestamp: 0 },
+      { type: GameEventType.BlockComplete, lane: 0, timestamp: 0 },
+    ]);
 
     const ctx = mockCtx();
     renderFrame(ctx, W, H, gs, 1);
@@ -107,14 +109,11 @@ describe('GameRenderer', () => {
   it('should render icon text for each block', () => {
     const gs = new GameState();
     gs.setDimensions(W, H);
-
-    gs.pushEvent(makeEvent({ type: GameEventType.Conflict, lane: 1 }));
-    gs.update(0.3);
+    spawnBlocks(gs, [{ type: GameEventType.Conflict, lane: 1, timestamp: 0 }]);
 
     const ctx = mockCtx();
     renderFrame(ctx, W, H, gs, 1);
 
-    // fillText called with the conflict icon
     expect(ctx.fillText).toHaveBeenCalledWith('⚡', expect.any(Number), expect.any(Number));
   });
 });

@@ -1,16 +1,11 @@
 /**
  * GameState — Wires txPool + spawner + config, drives per-frame update.
  *
- * Owns the ObjectPool<TxBlock>, the DummySpawner, and the game
- * configuration. The update(dt) method is called by GameLoop on each
- * fixed timestep: spawner ticks, active blocks move, blocks past the
- * commit zone are released back to the pool.
- *
- * S02 additions: pushEvent() for WS-driven mode, live stats counters,
- * mode switching (demo vs ws).
- *
- * Post-M012 fix: events are queued and dispatched over time based on
- * timestamp spacing, so blocks don't all spawn at once.
+ * Events from the WS are queued, then dispatched as **batches** — events
+ * with the same (or very close) timestamp are spawned together in one frame,
+ * so parallel tx execution is visible as simultaneous blocks falling in
+ * different lanes. Gaps between batches are stretched to a minimum interval
+ * so each batch is visually distinct.
  */
 
 import { ObjectPool } from '../engine/ObjectPool';
@@ -39,11 +34,19 @@ export interface LiveStats {
 }
 
 /**
- * Minimum interval between spawning queued events (seconds).
- * Even if server timestamps are bunched together, blocks spawn
- * at least this far apart so the player can see them.
+ * Minimum interval between dispatching **batches** (seconds).
+ * Events within 50ms of each other are considered the same batch
+ * (parallel execution), and the gap between batches is at least this.
  */
-const MIN_SPAWN_INTERVAL = 0.25; // 250ms
+const BATCH_INTERVAL = 0.4; // 400ms between batches
+
+/** Events within this window (seconds) are considered one parallel batch. */
+const BATCH_WINDOW = 0.05; // 50ms
+
+/** A group of events that happened at roughly the same time (parallel). */
+interface EventBatch {
+  events: GameEvent[];
+}
 
 export class GameState {
   readonly txPool: ObjectPool<TxBlock>;
@@ -62,18 +65,21 @@ export class GameState {
   /** Completion stats from server — set when BlockComplete arrives. */
   completionStats: CompletionStats | null = null;
 
-  /** Queued events waiting to be spawned. */
-  private eventQueue: GameEvent[] = [];
+  /** Raw incoming events — grouped into batches when ready. */
+  private rawQueue: GameEvent[] = [];
 
-  /** Time accumulator for draining the event queue. Reset when new events arrive. */
-  private queueTimer = 0;
-  private queueWasEmpty = true;
+  /** Grouped batches ready for time-spaced dispatch. */
+  private batches: EventBatch[] = [];
 
-  /** Callback for audio — fired when a block is actually spawned (not when WS receives it). */
-  onBlockSpawned: ((event: GameEvent) => void) | null = null;
+  /** Timer for spacing batches. */
+  private batchTimer = 0;
+  private batchReady = false;
 
   /** Callback for audio — fired when a block hits the commit zone. */
   onBlockHit: ((event: GameEvent) => void) | null = null;
+
+  /** Callback for audio — fired when a block is spawned. */
+  onBlockSpawned: ((event: GameEvent) => void) | null = null;
 
   constructor(config?: Partial<GameConfig>, rng?: () => number) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -95,18 +101,50 @@ export class GameState {
   }
 
   /**
-   * Queue a decoded GameEvent for time-spaced spawning.
-   * Automatically switches mode to 'ws' on first call.
+   * Queue a decoded GameEvent. Events are grouped into batches by timestamp
+   * and dispatched with visual spacing.
    */
   pushEvent(event: GameEvent): void {
     if (this.mode !== 'ws') {
       this.mode = 'ws';
     }
-    this.eventQueue.push(event);
+    this.rawQueue.push(event);
   }
 
   /**
-   * Actually spawn a block from a queued event. Updates stats + fires callback.
+   * Signal that all events have arrived — group raw events into batches.
+   * Called when WS completion frame arrives.
+   */
+  finalizeBatches(): void {
+    if (this.rawQueue.length === 0) return;
+
+    // Sort by timestamp
+    this.rawQueue.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Group into batches by timestamp proximity
+    let currentBatch: GameEvent[] = [this.rawQueue[0]];
+    let batchStart = this.rawQueue[0].timestamp;
+
+    for (let i = 1; i < this.rawQueue.length; i++) {
+      const ev = this.rawQueue[i];
+      if (ev.timestamp - batchStart <= BATCH_WINDOW) {
+        currentBatch.push(ev);
+      } else {
+        this.batches.push({ events: currentBatch });
+        currentBatch = [ev];
+        batchStart = ev.timestamp;
+      }
+    }
+    this.batches.push({ events: currentBatch });
+    this.rawQueue = [];
+
+    // Prime the timer so the first batch dispatches immediately
+    this.batchTimer = BATCH_INTERVAL;
+    this.batchReady = true;
+  }
+
+  /**
+   * Actually spawn a block from an event. Updates stats + fires callback.
    */
   private spawnFromEvent(event: GameEvent): TxBlock {
     this.stats.txCount++;
@@ -131,36 +169,28 @@ export class GameState {
     this.completionStats = cs;
   }
 
-  /** Whether queue is fully drained and all blocks have reached commit zone. */
+  /** Whether all batches dispatched and all blocks drained. */
   get isFullyDrained(): boolean {
-    return this.eventQueue.length === 0 && this.txPool.activeCount === 0;
+    return this.rawQueue.length === 0
+      && this.batches.length === 0
+      && this.txPool.activeCount === 0;
   }
 
   /**
    * Per-frame update at fixed timestep (dt in seconds).
-   * 1. Drain event queue at spaced intervals
-   * 2. Spawner may spawn new blocks (demo mode only)
-   * 3. Active blocks advance
-   * 4. Blocks past commit zone are released
    */
   update(dt: number): void {
-    // Drain event queue with minimum spacing
-    if (this.eventQueue.length > 0) {
-      // Reset timer when queue transitions from empty to non-empty
-      // (prevents accumulated time from draining all events at once)
-      if (this.queueWasEmpty) {
-        this.queueTimer = MIN_SPAWN_INTERVAL; // spawn first event immediately
-        this.queueWasEmpty = false;
+    // Dispatch batches with spacing
+    if (this.batchReady && this.batches.length > 0) {
+      this.batchTimer += dt;
+      while (this.batches.length > 0 && this.batchTimer >= BATCH_INTERVAL) {
+        this.batchTimer -= BATCH_INTERVAL;
+        const batch = this.batches.shift()!;
+        // Spawn ALL events in this batch simultaneously — this is the parallel execution
+        for (const event of batch.events) {
+          this.spawnFromEvent(event);
+        }
       }
-      this.queueTimer += dt;
-      while (this.eventQueue.length > 0 && this.queueTimer >= MIN_SPAWN_INTERVAL) {
-        this.queueTimer -= MIN_SPAWN_INTERVAL;
-        const event = this.eventQueue.shift()!;
-        this.spawnFromEvent(event);
-      }
-    } else {
-      this.queueWasEmpty = true;
-      this.queueTimer = 0;
     }
 
     // Spawner ticks only in demo mode
@@ -196,9 +226,10 @@ export class GameState {
     this.mode = 'demo';
     this.stats = { txCount: 0, conflicts: 0, reExecutions: 0 };
     this.completionStats = null;
-    this.eventQueue = [];
-    this.queueTimer = 0;
-    this.queueWasEmpty = true;
+    this.rawQueue = [];
+    this.batches = [];
+    this.batchTimer = 0;
+    this.batchReady = false;
     this.onBlockSpawned = null;
     this.onBlockHit = null;
   }

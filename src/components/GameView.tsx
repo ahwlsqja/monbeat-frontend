@@ -138,8 +138,10 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       onComplete: (stats) => {
         gameState.setCompletionStats(stats);
         completionStatsRef.current = stats;
+        // Group raw events into timestamp-based batches for visual dispatch.
+        // Parallel tx = same batch = simultaneous blocks in multiple lanes.
+        gameState.finalizeBatches();
         // Don't fire onComplete immediately — wait for all blocks to drain.
-        // The pendingCompletion flag is checked in the game loop's onUpdate.
         pendingCompletionRef.current = stats;
       },
       onError: (msg) => {
