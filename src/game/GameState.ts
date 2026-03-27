@@ -8,6 +8,9 @@
  *
  * S02 additions: pushEvent() for WS-driven mode, live stats counters,
  * mode switching (demo vs ws).
+ *
+ * Post-M012 fix: events are queued and dispatched over time based on
+ * timestamp spacing, so blocks don't all spawn at once.
  */
 
 import { ObjectPool } from '../engine/ObjectPool';
@@ -35,6 +38,13 @@ export interface LiveStats {
   reExecutions: number;
 }
 
+/**
+ * Minimum interval between spawning queued events (seconds).
+ * Even if server timestamps are bunched together, blocks spawn
+ * at least this far apart so the player can see them.
+ */
+const MIN_SPAWN_INTERVAL = 0.25; // 250ms
+
 export class GameState {
   readonly txPool: ObjectPool<TxBlock>;
   readonly spawner: DummySpawner;
@@ -51,6 +61,18 @@ export class GameState {
 
   /** Completion stats from server — set when BlockComplete arrives. */
   completionStats: CompletionStats | null = null;
+
+  /** Queued events waiting to be spawned. */
+  private eventQueue: GameEvent[] = [];
+
+  /** Time accumulator for draining the event queue. */
+  private queueTimer = 0;
+
+  /** Callback for audio — fired when a block is actually spawned (not when WS receives it). */
+  onBlockSpawned: ((event: GameEvent) => void) | null = null;
+
+  /** Callback for audio — fired when a block hits the commit zone. */
+  onBlockHit: ((event: GameEvent) => void) | null = null;
 
   constructor(config?: Partial<GameConfig>, rng?: () => number) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -72,19 +94,20 @@ export class GameState {
   }
 
   /**
-   * Push a decoded GameEvent into the game — acquires a TxBlock from
-   * the pool, inits it with event lane + eventType, and updates live stats.
+   * Queue a decoded GameEvent for time-spaced spawning.
    * Automatically switches mode to 'ws' on first call.
-   *
-   * Returns the spawned TxBlock (useful for tests).
    */
-  pushEvent(event: GameEvent): TxBlock {
-    // Switch to WS mode on first event — disables DummySpawner
+  pushEvent(event: GameEvent): void {
     if (this.mode !== 'ws') {
       this.mode = 'ws';
     }
+    this.eventQueue.push(event);
+  }
 
-    // Update live stats
+  /**
+   * Actually spawn a block from a queued event. Updates stats + fires callback.
+   */
+  private spawnFromEvent(event: GameEvent): TxBlock {
     this.stats.txCount++;
     if (event.type === GameEventType.Conflict) {
       this.stats.conflicts++;
@@ -92,9 +115,11 @@ export class GameState {
       this.stats.reExecutions++;
     }
 
-    // Acquire and init block
     const block = this.txPool.acquire();
     block.init(event.lane, this.canvasWidth, this.canvasHeight, event.type);
+    // Store event reference on block for audio on hit
+    (block as any)._event = event;
+    this.onBlockSpawned?.(event);
     return block;
   }
 
@@ -105,13 +130,29 @@ export class GameState {
     this.completionStats = cs;
   }
 
+  /** Whether queue is fully drained and all blocks have reached commit zone. */
+  get isFullyDrained(): boolean {
+    return this.eventQueue.length === 0 && this.txPool.activeCount === 0;
+  }
+
   /**
    * Per-frame update at fixed timestep (dt in seconds).
-   * 1. Spawner may spawn new blocks (demo mode only)
-   * 2. Active blocks advance
-   * 3. Blocks past commit zone are released
+   * 1. Drain event queue at spaced intervals
+   * 2. Spawner may spawn new blocks (demo mode only)
+   * 3. Active blocks advance
+   * 4. Blocks past commit zone are released
    */
   update(dt: number): void {
+    // Drain event queue with minimum spacing
+    if (this.eventQueue.length > 0) {
+      this.queueTimer += dt;
+      while (this.eventQueue.length > 0 && this.queueTimer >= MIN_SPAWN_INTERVAL) {
+        this.queueTimer -= MIN_SPAWN_INTERVAL;
+        const event = this.eventQueue.shift()!;
+        this.spawnFromEvent(event);
+      }
+    }
+
     // Spawner ticks only in demo mode
     if (this.mode === 'demo') {
       this.spawner.update(dt, this.txPool, this.canvasWidth, this.canvasHeight);
@@ -126,8 +167,12 @@ export class GameState {
       }
     }
 
-    // Release blocks that reached commit zone
+    // Release blocks that reached commit zone — fire audio callback
     for (const block of toRelease) {
+      const event = (block as any)._event as GameEvent | undefined;
+      if (event) {
+        this.onBlockHit?.(event);
+      }
       this.txPool.release(block);
     }
   }
@@ -141,5 +186,9 @@ export class GameState {
     this.mode = 'demo';
     this.stats = { txCount: 0, conflicts: 0, reExecutions: 0 };
     this.completionStats = null;
+    this.eventQueue = [];
+    this.queueTimer = 0;
+    this.onBlockSpawned = null;
+    this.onBlockHit = null;
   }
 }

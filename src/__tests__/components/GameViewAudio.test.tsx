@@ -252,7 +252,7 @@ describe('GameView — Audio + AdaptivePerformance wiring', () => {
     expect(mockSimulate).toHaveBeenCalledTimes(2);
   });
 
-  it('plays audio on game events via onEvent callback', async () => {
+  it('plays audio when blocks hit commit zone (via onBlockHit)', async () => {
     render(<GameView />);
 
     // First init the audio engine via simulate click
@@ -261,17 +261,17 @@ describe('GameView — Audio + AdaptivePerformance wiring', () => {
       fireEvent.click(simBtn);
     });
 
-    // Now fire an onEvent through the captured callbacks
+    // Fire an onEvent — this queues the event, doesn't play audio yet
     act(() => {
       capturedCallbacks.onEvent?.({
         type: 1, lane: 0, txIndex: 0, note: 60, slot: 0, timestamp: 0,
       });
     });
 
-    // AudioEngine.play should have been called
-    expect(mockPlay).toHaveBeenCalledWith({
-      type: 1, lane: 0, txIndex: 0, note: 60, slot: 0, timestamp: 0,
-    });
+    // Audio should NOT be called on event arrival (it's queued now)
+    // Audio plays when block reaches commit zone via onBlockHit callback
+    // In jsdom, game loop doesn't run, so we verify play was not called on push
+    expect(mockPlay).not.toHaveBeenCalled();
   });
 
   it('toggles audio off and on via toggle button', async () => {

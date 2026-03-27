@@ -242,32 +242,42 @@ describe('GameState', () => {
       expect(gs.mode).toBe('ws');
     });
 
-    it('should acquire a TxBlock from the pool and add to active set', () => {
+    it('should queue event and spawn block after update ticks', () => {
       const gs = new GameState();
       gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
 
-      const block = gs.pushEvent(makeEvent({ lane: 2 }));
-      expect(gs.activeTxBlocks.has(block)).toBe(true);
+      gs.pushEvent(makeEvent({ lane: 2 }));
+      // Not spawned yet — still in queue
+      expect(gs.activeTxBlocks.size).toBe(0);
+
+      // Tick past MIN_SPAWN_INTERVAL (0.25s)
+      gs.update(0.3);
+      expect(gs.activeTxBlocks.size).toBe(1);
+      const block = [...gs.activeTxBlocks][0];
       expect(block.lane).toBe(2);
       expect(block.state).toBe('falling');
     });
 
-    it('should set block eventType and color from event', () => {
+    it('should set block eventType and color from event after spawn', () => {
       const gs = new GameState();
       gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
 
-      const block = gs.pushEvent(makeEvent({ type: GameEventType.Conflict, lane: 1 }));
+      gs.pushEvent(makeEvent({ type: GameEventType.Conflict, lane: 1 }));
+      gs.update(0.3);
+      const block = [...gs.activeTxBlocks][0];
       expect(block.eventType).toBe(GameEventType.Conflict);
       expect(block.color).toBe(EVENT_COLORS[GameEventType.Conflict]);
     });
 
-    it('should increment txCount for every event', () => {
+    it('should increment txCount when events are spawned', () => {
       const gs = new GameState();
       gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
 
       gs.pushEvent(makeEvent({ type: GameEventType.TxCommit }));
       gs.pushEvent(makeEvent({ type: GameEventType.Conflict }));
       gs.pushEvent(makeEvent({ type: GameEventType.ReExecution }));
+      // Tick enough to drain all 3 events (3 * 0.25s = 0.75s)
+      gs.update(0.8);
       expect(gs.stats.txCount).toBe(3);
     });
 
@@ -278,6 +288,7 @@ describe('GameState', () => {
       gs.pushEvent(makeEvent({ type: GameEventType.Conflict }));
       gs.pushEvent(makeEvent({ type: GameEventType.Conflict }));
       gs.pushEvent(makeEvent({ type: GameEventType.TxCommit }));
+      gs.update(0.8);
       expect(gs.stats.conflicts).toBe(2);
     });
 
@@ -287,6 +298,7 @@ describe('GameState', () => {
 
       gs.pushEvent(makeEvent({ type: GameEventType.ReExecution }));
       gs.pushEvent(makeEvent({ type: GameEventType.TxCommit }));
+      gs.update(0.6);
       expect(gs.stats.reExecutions).toBe(1);
     });
 
@@ -296,9 +308,44 @@ describe('GameState', () => {
 
       gs.pushEvent(makeEvent({ type: GameEventType.ReExecutionResolved }));
       gs.pushEvent(makeEvent({ type: GameEventType.BlockComplete }));
+      gs.update(0.6);
       expect(gs.stats.conflicts).toBe(0);
       expect(gs.stats.reExecutions).toBe(0);
       expect(gs.stats.txCount).toBe(2);
+    });
+
+    it('should space spawns at MIN_SPAWN_INTERVAL', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      gs.pushEvent(makeEvent({ lane: 0 }));
+      gs.pushEvent(makeEvent({ lane: 1 }));
+      gs.pushEvent(makeEvent({ lane: 2 }));
+
+      // Tick 0.26s — only 1 should spawn
+      gs.update(0.26);
+      expect(gs.activeTxBlocks.size).toBe(1);
+
+      // Tick another 0.25s — second spawns
+      gs.update(0.25);
+      expect(gs.activeTxBlocks.size).toBe(2);
+    });
+
+    it('should fire onBlockHit callback when block reaches commit zone', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      const hitEvents: GameEvent[] = [];
+      gs.onBlockHit = (e) => hitEvents.push(e);
+
+      gs.pushEvent(makeEvent({ type: GameEventType.TxCommit, lane: 0 }));
+      // Spawn the block
+      gs.update(0.3);
+      // Advance until commit zone (commitZoneY = 0.85 * height, speed=200px/s)
+      // From y=-20, need to travel ~700px at 200px/s = ~3.5s
+      for (let i = 0; i < 40; i++) gs.update(0.1);
+      expect(hitEvents.length).toBe(1);
+      expect(hitEvents[0].type).toBe(GameEventType.TxCommit);
     });
   });
 

@@ -89,15 +89,19 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     // Point statsRef to GameState's live stats object — StatsHUD reads this every 200ms
     statsRef.current = gameState.stats;
 
+    // Wire audio to commit zone hits — sound syncs with visual impact
+    gameState.onBlockHit = (event) => {
+      audioEngineRef.current?.play(event);
+    };
+
     // --- Game loop callbacks ---
     perfMonitor.beginFrame();
 
     const onUpdate = (dtMs: number) => {
       gameState.update(dtMs / 1000);
       // After all WS events have been received (pendingCompletion set),
-      // wait for active blocks to drain to 0 before firing onComplete.
-      // This lets the player watch all blocks fall to the commit zone.
-      if (pendingCompletionRef.current && gameState.txPool.activeCount === 0) {
+      // wait for event queue + active blocks to fully drain before firing onComplete.
+      if (pendingCompletionRef.current && gameState.isFullyDrained) {
         const stats = pendingCompletionRef.current;
         pendingCompletionRef.current = null;
         onCompleteRef.current?.(stats);
@@ -128,11 +132,8 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
 
     socket.on({
       onEvent: (event) => {
-        // pushEvent auto-switches GameState from demo→ws mode on first event,
-        // acquires a TxBlock from pool, inits with event.lane + event.type color.
+        // Queue event for time-spaced spawning — no longer spawns immediately.
         gameState.pushEvent(event);
-        // Play audio for this event (no-op if muted, rate-limited, or not ready)
-        audioEngineRef.current?.play(event);
       },
       onComplete: (stats) => {
         gameState.setCompletionStats(stats);

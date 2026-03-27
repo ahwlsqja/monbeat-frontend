@@ -72,6 +72,7 @@ describe('GameRenderer', () => {
     gs.pushEvent(makeEvent({ type: GameEventType.TxCommit, lane: 0 }));
     gs.pushEvent(makeEvent({ type: GameEventType.Conflict, lane: 1 }));
     gs.pushEvent(makeEvent({ type: GameEventType.TxCommit, lane: 2 }));
+    gs.update(0.8); // drain queue
 
     const ctx = mockCtx();
     renderFrame(ctx, W, H, gs, 1);
@@ -95,6 +96,7 @@ describe('GameRenderer', () => {
     gs.pushEvent(makeEvent({ type: GameEventType.ReExecution, lane: 2 }));
     gs.pushEvent(makeEvent({ type: GameEventType.ReExecutionResolved, lane: 3 }));
     gs.pushEvent(makeEvent({ type: GameEventType.BlockComplete, lane: 0 }));
+    gs.update(1.5); // drain all 5 events
 
     const ctx = mockCtx();
     renderFrame(ctx, W, H, gs, 1);
@@ -114,7 +116,9 @@ describe('GameRenderer', () => {
     const gs = new GameState();
     gs.setDimensions(W, H);
 
-    const block = gs.pushEvent(makeEvent({ lane: 0 }));
+    gs.pushEvent(makeEvent({ lane: 0 }));
+    gs.update(0.3); // drain queue
+    const block = [...gs.activeTxBlocks][0];
     // Set fractional position
     block.x = 40.7;
     block.y = 100.3;
@@ -139,6 +143,7 @@ describe('GameRenderer', () => {
     gs.pushEvent(makeEvent({ type: GameEventType.TxCommit, lane: 0 }));
     gs.pushEvent(makeEvent({ type: GameEventType.Conflict, lane: 1 }));
     gs.pushEvent(makeEvent({ type: GameEventType.TxCommit, lane: 2 }));
+    gs.update(0.8); // drain all 3 events from queue
 
     const ctx = mockCtx();
     renderFrame(ctx, W, H, gs, 1);
