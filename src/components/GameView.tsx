@@ -68,6 +68,9 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
+  // Pending completion: set when WS sends completion, cleared when all blocks drain
+  const pendingCompletionRef = useRef<CompletionStats | null>(null);
+
   useEffect(() => {
     const container = containerRef.current;
     const bgCanvas = bgCanvasRef.current;
@@ -91,6 +94,14 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
 
     const onUpdate = (dtMs: number) => {
       gameState.update(dtMs / 1000);
+      // After all WS events have been received (pendingCompletion set),
+      // wait for active blocks to drain to 0 before firing onComplete.
+      // This lets the player watch all blocks fall to the commit zone.
+      if (pendingCompletionRef.current && gameState.txPool.activeCount === 0) {
+        const stats = pendingCompletionRef.current;
+        pendingCompletionRef.current = null;
+        onCompleteRef.current?.(stats);
+      }
     };
 
     const onRender = (alpha: number) => {
@@ -126,7 +137,9 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       onComplete: (stats) => {
         gameState.setCompletionStats(stats);
         completionStatsRef.current = stats;
-        onCompleteRef.current?.(stats);
+        // Don't fire onComplete immediately — wait for all blocks to drain.
+        // The pendingCompletion flag is checked in the game loop's onUpdate.
+        pendingCompletionRef.current = stats;
       },
       onError: (msg) => {
         console.warn('[MonBeat WS]', msg);
@@ -198,6 +211,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     gs.completionStats = null;
     gs.mode = 'demo'; // will auto-switch back to 'ws' on first event via pushEvent
     completionStatsRef.current = null;
+    pendingCompletionRef.current = null;
 
     socket.simulate(source);
   }, [audioEnabled, source]);
