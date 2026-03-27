@@ -322,13 +322,18 @@ describe('GameState', () => {
       gs.pushEvent(makeEvent({ lane: 1 }));
       gs.pushEvent(makeEvent({ lane: 2 }));
 
-      // Tick 0.26s — only 1 should spawn
-      gs.update(0.26);
+      // First update: first event spawns immediately (queueTimer primed),
+      // 0.01s not enough for second
+      gs.update(0.01);
       expect(gs.activeTxBlocks.size).toBe(1);
 
       // Tick another 0.25s — second spawns
       gs.update(0.25);
       expect(gs.activeTxBlocks.size).toBe(2);
+
+      // Tick another 0.25s — third spawns
+      gs.update(0.25);
+      expect(gs.activeTxBlocks.size).toBe(3);
     });
 
     it('should fire onBlockHit callback when block reaches commit zone', () => {

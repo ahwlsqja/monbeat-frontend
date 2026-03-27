@@ -106,7 +106,7 @@ export class AudioEngine {
     this.synths = oscillatorTypes.map(
       (type) =>
         new Tone.PolySynth({
-          maxPolyphony: 4,
+          maxPolyphony: 8,
           voice: Tone.Synth,
           options: {
             oscillator: { type },

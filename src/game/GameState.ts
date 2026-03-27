@@ -65,8 +65,9 @@ export class GameState {
   /** Queued events waiting to be spawned. */
   private eventQueue: GameEvent[] = [];
 
-  /** Time accumulator for draining the event queue. */
+  /** Time accumulator for draining the event queue. Reset when new events arrive. */
   private queueTimer = 0;
+  private queueWasEmpty = true;
 
   /** Callback for audio — fired when a block is actually spawned (not when WS receives it). */
   onBlockSpawned: ((event: GameEvent) => void) | null = null;
@@ -145,12 +146,21 @@ export class GameState {
   update(dt: number): void {
     // Drain event queue with minimum spacing
     if (this.eventQueue.length > 0) {
+      // Reset timer when queue transitions from empty to non-empty
+      // (prevents accumulated time from draining all events at once)
+      if (this.queueWasEmpty) {
+        this.queueTimer = MIN_SPAWN_INTERVAL; // spawn first event immediately
+        this.queueWasEmpty = false;
+      }
       this.queueTimer += dt;
       while (this.eventQueue.length > 0 && this.queueTimer >= MIN_SPAWN_INTERVAL) {
         this.queueTimer -= MIN_SPAWN_INTERVAL;
         const event = this.eventQueue.shift()!;
         this.spawnFromEvent(event);
       }
+    } else {
+      this.queueWasEmpty = true;
+      this.queueTimer = 0;
     }
 
     // Spawner ticks only in demo mode
@@ -188,6 +198,7 @@ export class GameState {
     this.completionStats = null;
     this.eventQueue = [];
     this.queueTimer = 0;
+    this.queueWasEmpty = true;
     this.onBlockSpawned = null;
     this.onBlockHit = null;
   }
