@@ -97,7 +97,11 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
 
     // Wire audio to commit zone hits — sound syncs with visual impact
     gameState.onBlockHit = (event) => {
-      audioEngineRef.current?.play(event);
+      try {
+        audioEngineRef.current?.play(event);
+      } catch {
+        // Tone.js timing error — safe to drop
+      }
     };
 
     // Wire hit-burst particles — fired with block rect before release
