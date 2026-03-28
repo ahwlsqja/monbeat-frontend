@@ -28,33 +28,29 @@ const GameView = dynamic(() => import('./GameView'), {
 const COUNTER_SOURCE = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-// UserVault — each sender has an independent balance (mapping slot).
-// Parallel execution: different senders touch different storage slots,
-// so most TXs can execute in parallel without conflicts.
-// Shared-state functions (totalDeposits) create realistic conflicts.
+// MultiWallet — each sender has a completely independent balance.
+// No shared state: parallel execution achieves near-zero conflicts.
+// Only same-sender TXs conflict (nonce ordering).
 
-contract UserVault {
+contract MultiWallet {
     mapping(address => uint256) public balances;
-    uint256 public totalDeposits;
+    mapping(address => uint256) public stakes;
 
     function deposit() public {
         balances[msg.sender] += 100;
-        totalDeposits += 100;
     }
 
     function withdraw() public {
-        uint256 bal = balances[msg.sender];
-        if (bal >= 50) {
+        if (balances[msg.sender] >= 50) {
             balances[msg.sender] -= 50;
-            totalDeposits -= 50;
         }
     }
 
-    function transfer(address to) public {
-        uint256 bal = balances[msg.sender];
-        if (bal >= 10) {
+    function stake() public {
+        uint256 amount = balances[msg.sender];
+        if (amount >= 10) {
             balances[msg.sender] -= 10;
-            balances[to] += 10;
+            stakes[msg.sender] += 10;
         }
     }
 }`;

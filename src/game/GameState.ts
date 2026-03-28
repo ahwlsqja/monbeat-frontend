@@ -127,6 +127,8 @@ export class GameState {
   pushEvent(event: GameEvent): void {
     if (this.mode !== 'ws') {
       this.mode = 'ws';
+      // Clear any leftover demo blocks when switching to WS mode
+      this.txPool.releaseAll();
     }
 
     if (this.openBatch.length === 0) {
