@@ -272,6 +272,7 @@ export class PixiRenderer {
    * Also spawns trail particles at 30Hz (every 2nd frame) for falling blocks.
    */
   syncBlocks(blocks: Set<TxBlock>): void {
+    if (!this.initialized) return;
     this.trailFrameCounter++;
     const spawnTrails = this.trailFrameCounter % 2 === 0;
 
@@ -334,13 +335,13 @@ export class PixiRenderer {
 
   /** Manual render call — replaces PixiJS auto ticker. */
   render(): void {
-    if (!this.app?.renderer) return;
+    if (!this.initialized || !this.app?.renderer) return;
     this.app.renderer.render(this.app.stage);
   }
 
   /** Resize the renderer + redraw the background layer. */
   resize(width: number, height: number): void {
-    if (!this.app?.renderer) return;
+    if (!this.initialized || !this.app?.renderer) return;
     this.app.renderer.resize(width, height);
     this.drawBackground(width, height);
   }
