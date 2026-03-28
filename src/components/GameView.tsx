@@ -9,9 +9,7 @@ import { GameState } from '../game/GameState';
 import type { LiveStats } from '../game/GameState';
 import { MonBeatSocket } from '../net/MonBeatSocket';
 import type { CompletionStats, WsState } from '../net/types';
-import { setupCanvas } from '../renderer/setupCanvas';
-import { drawBackground } from '../renderer/BackgroundRenderer';
-import { renderFrame } from '../renderer/GameRenderer';
+import { PixiRenderer } from '../renderer/PixiRenderer';
 import HUD from './HUD';
 import StatsHUD from './StatsHUD';
 
@@ -29,20 +27,18 @@ export interface GameViewProps {
 }
 
 /**
- * GameView — Mounts dual-layer canvases, wires engine lifecycle,
+ * GameView — Mounts a PixiJS WebGL Application, wires engine lifecycle,
  * manages MonBeatSocket WS connection, and routes events to GameState.
  *
  * Layer stack (bottom → top):
- *   1. bgCanvas  — static 4-lane background (redrawn on resize only)
- *   2. gameCanvas — per-frame tx block rendering (cleared + redrawn at 60fps)
+ *   1. PixiJS bgLayer  — static 4-lane background (redrawn on resize only)
+ *   2. PixiJS gameLayer — per-frame tx block rendering (synced at 60fps)
  *   3. HUD (HTML) — FPS counter overlay (top-right)
  *   4. StatsHUD (HTML) — Live tx/conflict/re-exec counters (top-left)
  *   5. Simulation controls (HTML) — Start/status button (bottom-center)
  */
 export default function GameView({ source, onComplete, autoPlay }: GameViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const bgCanvasRef = useRef<HTMLCanvasElement>(null);
-  const gameCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const [perfMonitor] = useState(() => new PerfMonitor());
 
@@ -51,14 +47,13 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
   const [wsError, setWsError] = useState<string | null>(null);
 
   // Refs for StatsHUD — direct DOM mutation, no React re-renders in hot path.
-  // statsRef.current points to GameState.stats (mutated in-place by pushEvent).
   const statsRef = useRef<LiveStats>({ txCount: 0, conflicts: 0, reExecutions: 0 });
   const completionStatsRef = useRef<CompletionStats | null>(null);
 
   // Audio + adaptive performance
   const audioEngineRef = useRef<AudioEngine | null>(null);
   const adaptiveRef = useRef<AdaptivePerformance | null>(null);
-  const [audioEnabled, setAudioEnabled] = useState(true); // set from tier in effect
+  const [audioEnabled, setAudioEnabled] = useState(true);
 
   // Cross-effect refs for simulate button callback
   const gameStateRef = useRef<GameState | null>(null);
@@ -73,17 +68,28 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
 
   useEffect(() => {
     const container = containerRef.current;
-    const bgCanvas = bgCanvasRef.current;
-    const gameCanvas = gameCanvasRef.current;
-    if (!container || !bgCanvas || !gameCanvas) return;
+    if (!container) return;
 
-    // --- Canvas + engine setup ---
-    let bgSetup = setupCanvas(bgCanvas);
-    let gameSetup = setupCanvas(gameCanvas);
-    drawBackground(bgSetup.ctx, bgSetup.width, bgSetup.height);
+    // --- PixiJS + engine setup ---
+    const pixiRenderer = new PixiRenderer();
+    let destroyed = false;
+
+    // --- AdaptivePerformance: tier detection (must precede init for config) ---
+    const adaptive = new AdaptivePerformance();
+    adaptiveRef.current = adaptive;
+
+    const initPromise = (async () => {
+      const { clientWidth: width, clientHeight: height } = container;
+      await pixiRenderer.init(container, width || 800, height || 600, {
+        maxParticles: adaptive.config.maxParticles,
+        enableTrails: adaptive.config.enableTrails,
+      });
+      if (destroyed) { pixiRenderer.destroy(); return; }
+      pixiRenderer.drawBackground(width || 800, height || 600);
+    })();
 
     const gameState = new GameState();
-    gameState.setDimensions(gameSetup.width, gameSetup.height);
+    gameState.setDimensions(container.clientWidth || 800, container.clientHeight || 600);
     gameStateRef.current = gameState;
 
     // Point statsRef to GameState's live stats object — StatsHUD reads this every 200ms
@@ -94,11 +100,20 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       audioEngineRef.current?.play(event);
     };
 
+    // Wire hit-burst particles — fired with block rect before release
+    gameState.onBlockHitVisual = (x, y, width, height, color) => {
+      const tint = parseInt(color.slice(1), 16);
+      pixiRenderer.emitHitBurst(x, y, width, height, tint, 12);
+    };
+
     // --- Game loop callbacks ---
     perfMonitor.beginFrame();
 
     const onUpdate = (dtMs: number) => {
-      gameState.update(dtMs / 1000);
+      const dtSec = dtMs / 1000;
+      gameState.update(dtSec);
+      // Update effect systems (particles + trails) — must run every frame
+      pixiRenderer.updateEffects(dtSec);
       // After all WS events have been received (pendingCompletion set),
       // wait for event queue + active blocks to fully drain before firing onComplete.
       if (pendingCompletionRef.current && gameState.isFullyDrained) {
@@ -108,10 +123,12 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       }
     };
 
-    const onRender = (alpha: number) => {
+    const onRender = (_alpha: number) => {
       perfMonitor.endFrame();
       perfMonitor.beginFrame();
-      renderFrame(gameSetup.ctx, gameSetup.width, gameSetup.height, gameState, alpha);
+      // Sync PixiJS Graphics with active TxBlocks (lazy-creates missing, updates positions)
+      pixiRenderer.syncBlocks(gameState.activeTxBlocks);
+      pixiRenderer.render();
     };
 
     const loop = new GameLoop(onUpdate, onRender);
@@ -119,10 +136,11 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
 
     // --- ResizeObserver ---
     const ro = new ResizeObserver(() => {
-      bgSetup = setupCanvas(bgCanvas);
-      gameSetup = setupCanvas(gameCanvas);
-      drawBackground(bgSetup.ctx, bgSetup.width, bgSetup.height);
-      gameState.setDimensions(gameSetup.width, gameSetup.height);
+      const { clientWidth: w, clientHeight: h } = container;
+      if (w > 0 && h > 0) {
+        pixiRenderer.resize(w, h);
+        gameState.setDimensions(w, h);
+      }
     });
     ro.observe(container);
 
@@ -132,16 +150,12 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
 
     socket.on({
       onEvent: (event) => {
-        // Queue event for time-spaced spawning — no longer spawns immediately.
         gameState.pushEvent(event);
       },
       onComplete: (stats) => {
         gameState.setCompletionStats(stats);
         completionStatsRef.current = stats;
-        // Group raw events into timestamp-based batches for visual dispatch.
-        // Parallel tx = same batch = simultaneous blocks in multiple lanes.
         gameState.finalizeBatches();
-        // Don't fire onComplete immediately — wait for all blocks to drain.
         pendingCompletionRef.current = stats;
       },
       onError: (msg) => {
@@ -155,11 +169,10 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
 
     socket.connect(WS_URL);
 
-    // --- AdaptivePerformance: tier detection + audio default ---
-    const adaptive = new AdaptivePerformance();
-    adaptiveRef.current = adaptive;
+    // --- AdaptivePerformance: enableGlow + audio default ---
+    // (adaptive instance already created above for effect config)
+    pixiRenderer.enableGlow = adaptive.config.enableGlow;
 
-    // Low/minimal tiers: audio off by default (mobile, low-end devices)
     if (adaptive.tier === 'low' || adaptive.tier === 'minimal') {
       setAudioEnabled(false);
     }
@@ -174,8 +187,9 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
-    // --- Cleanup (React strict-mode safe: socket.disconnect closes existing WS) ---
+    // --- Cleanup (React strict-mode safe) ---
     return () => {
+      destroyed = true;
       document.removeEventListener('visibilitychange', handleVisibility);
       adaptive.dispose();
       adaptiveRef.current = null;
@@ -187,10 +201,11 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       gameState.reset();
       gameStateRef.current = null;
       ro.disconnect();
+      pixiRenderer.destroy();
     };
   }, [perfMonitor]);
 
-  /** Trigger a Counter contract simulation via the WS connection. */
+  /** Trigger a simulation via the WS connection. */
   const handleSimulate = useCallback(async () => {
     const socket = socketRef.current;
     const gs = gameStateRef.current;
@@ -206,17 +221,17 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       await audioEngineRef.current.init();
     }
 
-    // Clear visual state for new simulation — mutate in-place so refs stay valid
+    // Clear visual state for new simulation
     gs.txPool.releaseAll();
     gs.stats.txCount = 0;
     gs.stats.conflicts = 0;
     gs.stats.reExecutions = 0;
     gs.completionStats = null;
-    gs.mode = 'ws'; // immediately switch to ws mode — no demo blocks during server compile
+    gs.mode = 'ws';
     completionStatsRef.current = null;
     pendingCompletionRef.current = null;
 
-    socket.simulate(source);
+    socket.simulate(source, 100);
   }, [audioEnabled, source]);
 
   // Auto-play: trigger simulation when WS connects and autoPlay is set
@@ -228,12 +243,11 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     }
   }, [autoPlay, wsState, handleSimulate]);
 
-  /** Toggle audio on/off. If enabling and engine not ready, init (user gesture). */
+  /** Toggle audio on/off. */
   const handleAudioToggle = useCallback(async () => {
     const next = !audioEnabled;
     setAudioEnabled(next);
     if (next) {
-      // Enabling — init AudioEngine inside click handler (user gesture for iOS)
       if (!audioEngineRef.current) {
         audioEngineRef.current = new AudioEngine();
       }
@@ -245,15 +259,6 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       audioEngineRef.current?.mute();
     }
   }, [audioEnabled]);
-
-  const canvasStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    display: 'block',
-  };
 
   return (
     <div
@@ -267,8 +272,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
         background: '#0a0a0f',
       }}
     >
-      <canvas ref={bgCanvasRef} style={canvasStyle} />
-      <canvas ref={gameCanvasRef} style={{ ...canvasStyle, zIndex: 1 }} />
+      {/* PixiJS appends its canvas to containerRef — no manual <canvas> elements */}
       <HUD perfMonitor={perfMonitor} />
       <StatsHUD statsRef={statsRef} completionStatsRef={completionStatsRef} />
 

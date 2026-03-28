@@ -104,33 +104,29 @@ vi.mock('../../net/MonBeatSocket', () => ({
   }),
 }));
 
-// Canvas / renderer mocks
-vi.mock('../../renderer/setupCanvas', () => ({
-  setupCanvas: vi.fn().mockReturnValue({
-    ctx: {
-      clearRect: vi.fn(),
-      fillRect: vi.fn(),
-      fillText: vi.fn(),
-      save: vi.fn(),
-      restore: vi.fn(),
-      beginPath: vi.fn(),
-      set fillStyle(_v: string) { /* noop */ },
-      set font(_v: string) { /* noop */ },
-      set textAlign(_v: string) { /* noop */ },
-      set textBaseline(_v: string) { /* noop */ },
-      set globalAlpha(_v: number) { /* noop */ },
-    },
-    width: 800,
-    height: 600,
-  }),
-}));
+// Canvas / renderer mocks — PixiRenderer replaces setupCanvas/BackgroundRenderer/GameRenderer
+const mockPixiInit = vi.fn().mockResolvedValue(undefined);
+const mockPixiAddBlock = vi.fn();
+const mockPixiRemoveBlock = vi.fn();
+const mockPixiSyncBlocks = vi.fn();
+const mockPixiDrawBackground = vi.fn();
+const mockPixiRender = vi.fn();
+const mockPixiResize = vi.fn();
+const mockPixiDestroy = vi.fn();
+const mockPixiGetCanvas = vi.fn().mockReturnValue(document.createElement('canvas'));
 
-vi.mock('../../renderer/BackgroundRenderer', () => ({
-  drawBackground: vi.fn(),
-}));
-
-vi.mock('../../renderer/GameRenderer', () => ({
-  renderFrame: vi.fn(),
+vi.mock('../../renderer/PixiRenderer', () => ({
+  PixiRenderer: vi.fn().mockImplementation(() => ({
+    init: mockPixiInit,
+    addBlock: mockPixiAddBlock,
+    removeBlock: mockPixiRemoveBlock,
+    syncBlocks: mockPixiSyncBlocks,
+    drawBackground: mockPixiDrawBackground,
+    render: mockPixiRender,
+    resize: mockPixiResize,
+    destroy: mockPixiDestroy,
+    getCanvas: mockPixiGetCanvas,
+  })),
 }));
 
 // HUD / StatsHUD — simple pass-through

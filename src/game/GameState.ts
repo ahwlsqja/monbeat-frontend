@@ -1,11 +1,18 @@
 /**
  * GameState — Wires txPool + spawner + config, drives per-frame update.
  *
- * Events from the WS are queued, then dispatched as **batches** — events
- * with the same (or very close) timestamp are spawned together in one frame,
- * so parallel tx execution is visible as simultaneous blocks falling in
- * different lanes. Gaps between batches are stretched to a minimum interval
- * so each batch is visually distinct.
+ * Events from the WS are grouped into batches **progressively** as they
+ * arrive via pushEvent() — events with timestamps within BATCH_WINDOW
+ * (50ms) are grouped together. When a timestamp gap is detected, the
+ * previous batch is closed and becomes ready for dispatch immediately.
+ *
+ * This streaming approach means blocks start falling as soon as the first
+ * batch of WS events arrives, instead of waiting for all events.
+ * finalizeBatches() only closes the last open batch when the server signals
+ * completion.
+ *
+ * Gaps between batches are stretched to BATCH_INTERVAL (400ms) so each
+ * batch is visually distinct.
  */
 
 import { ObjectPool } from '../engine/ObjectPool';
@@ -65,18 +72,27 @@ export class GameState {
   /** Completion stats from server — set when BlockComplete arrives. */
   completionStats: CompletionStats | null = null;
 
-  /** Raw incoming events — grouped into batches when ready. */
-  private rawQueue: GameEvent[] = [];
-
   /** Grouped batches ready for time-spaced dispatch. */
   private batches: EventBatch[] = [];
 
+  /** Current open batch being accumulated (not yet ready for dispatch). */
+  private openBatch: GameEvent[] = [];
+  private openBatchStart = 0;
+
   /** Timer for spacing batches. */
   private batchTimer = 0;
+
+  /** True once at least one batch is ready. */
   private batchReady = false;
+
+  /** True once finalizeBatches() has been called — no more events coming. */
+  private streamComplete = false;
 
   /** Callback for audio — fired when a block hits the commit zone. */
   onBlockHit: ((event: GameEvent) => void) | null = null;
+
+  /** Callback for visual effects — fired with block rect info before release. */
+  onBlockHitVisual: ((x: number, y: number, width: number, height: number, color: string) => void) | null = null;
 
   /** Callback for audio — fired when a block is spawned. */
   onBlockSpawned: ((event: GameEvent) => void) | null = null;
@@ -101,46 +117,55 @@ export class GameState {
   }
 
   /**
-   * Queue a decoded GameEvent. Events are grouped into batches by timestamp
-   * and dispatched with visual spacing.
+   * Queue a decoded GameEvent. Events are grouped into batches **progressively**
+   * as they arrive — when a timestamp gap > BATCH_WINDOW is detected, the
+   * previous batch is closed and becomes ready for dispatch immediately.
+   *
+   * This streaming approach means blocks start appearing as soon as the first
+   * batch of WS events arrives, instead of waiting for all events to arrive.
    */
   pushEvent(event: GameEvent): void {
     if (this.mode !== 'ws') {
       this.mode = 'ws';
     }
-    this.rawQueue.push(event);
+
+    if (this.openBatch.length === 0) {
+      // First event — start a new open batch
+      this.openBatch.push(event);
+      this.openBatchStart = event.timestamp;
+    } else if (event.timestamp - this.openBatchStart <= BATCH_WINDOW) {
+      // Within window — add to current open batch
+      this.openBatch.push(event);
+    } else {
+      // Timestamp gap detected — close current batch and start a new one
+      this.batches.push({ events: this.openBatch });
+      this.openBatch = [event];
+      this.openBatchStart = event.timestamp;
+
+      // Prime the batch timer on the very first closed batch
+      if (!this.batchReady) {
+        this.batchTimer = BATCH_INTERVAL;
+        this.batchReady = true;
+      }
+    }
   }
 
   /**
-   * Signal that all events have arrived — group raw events into batches.
+   * Signal that all events have arrived — close the last open batch.
    * Called when WS completion frame arrives.
    */
   finalizeBatches(): void {
-    if (this.rawQueue.length === 0) return;
-
-    // Sort by timestamp
-    this.rawQueue.sort((a, b) => a.timestamp - b.timestamp);
-
-    // Group into batches by timestamp proximity
-    let currentBatch: GameEvent[] = [this.rawQueue[0]];
-    let batchStart = this.rawQueue[0].timestamp;
-
-    for (let i = 1; i < this.rawQueue.length; i++) {
-      const ev = this.rawQueue[i];
-      if (ev.timestamp - batchStart <= BATCH_WINDOW) {
-        currentBatch.push(ev);
-      } else {
-        this.batches.push({ events: currentBatch });
-        currentBatch = [ev];
-        batchStart = ev.timestamp;
-      }
+    if (this.openBatch.length > 0) {
+      this.batches.push({ events: this.openBatch });
+      this.openBatch = [];
     }
-    this.batches.push({ events: currentBatch });
-    this.rawQueue = [];
+    this.streamComplete = true;
 
-    // Prime the timer so the first batch dispatches immediately
-    this.batchTimer = BATCH_INTERVAL;
-    this.batchReady = true;
+    // If no batches were closed progressively yet, prime now
+    if (!this.batchReady && this.batches.length > 0) {
+      this.batchTimer = BATCH_INTERVAL;
+      this.batchReady = true;
+    }
   }
 
   /**
@@ -171,7 +196,7 @@ export class GameState {
 
   /** Whether all batches dispatched and all blocks drained. */
   get isFullyDrained(): boolean {
-    return this.rawQueue.length === 0
+    return this.openBatch.length === 0
       && this.batches.length === 0
       && this.txPool.activeCount === 0;
   }
@@ -207,8 +232,10 @@ export class GameState {
       }
     }
 
-    // Release blocks that reached commit zone — fire audio callback
+    // Release blocks that reached commit zone — fire audio + visual callbacks
     for (const block of toRelease) {
+      // Fire visual hit callback with block rect before release
+      this.onBlockHitVisual?.(block.x, block.y, block.width, block.height, block.color);
       const event = (block as any)._event as GameEvent | undefined;
       if (event) {
         this.onBlockHit?.(event);
@@ -226,11 +253,14 @@ export class GameState {
     this.mode = 'demo';
     this.stats = { txCount: 0, conflicts: 0, reExecutions: 0 };
     this.completionStats = null;
-    this.rawQueue = [];
     this.batches = [];
+    this.openBatch = [];
+    this.openBatchStart = 0;
     this.batchTimer = 0;
     this.batchReady = false;
+    this.streamComplete = false;
     this.onBlockSpawned = null;
     this.onBlockHit = null;
+    this.onBlockHitVisual = null;
   }
 }

@@ -30,6 +30,13 @@ export class TxBlock implements Poolable {
   eventType: GameEventTypeT = GameEventType.TxCommit;
 
   /**
+   * Optional PixiJS Graphics reference. Typed as `any` to keep the entity
+   * layer renderer-agnostic — PixiRenderer manages the actual Graphics lifecycle.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  graphics: any | null = null;
+
+  /**
    * Initialize the block for a specific lane and canvas dimensions.
    * Optional eventType derives color from EVENT_COLORS map.
    * Called after acquire() from the pool.
@@ -68,6 +75,7 @@ export class TxBlock implements Poolable {
    * Reset all properties to defaults for pool reuse.
    */
   reset(): void {
+    this.clearGraphics();
     this.x = 0;
     this.y = 0;
     this.width = 0;
@@ -78,5 +86,17 @@ export class TxBlock implements Poolable {
     this.color = DEFAULT_COLOR;
     this.speed = 200;
     this.commitZoneY = 0;
+  }
+
+  /**
+   * Detach and destroy the associated PixiJS Graphics, if any.
+   * Called by reset() and on explicit block removal.
+   */
+  clearGraphics(): void {
+    if (this.graphics) {
+      this.graphics.removeFromParent?.();
+      this.graphics.destroy?.();
+      this.graphics = null;
+    }
   }
 }

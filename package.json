@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "next": "^15.3.2",
+    "pixi-filters": "^6.1.5",
+    "pixi.js": "^8.17.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tone": "^15.1.22"

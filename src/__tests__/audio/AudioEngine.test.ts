@@ -115,11 +115,11 @@ describe('AudioEngine', () => {
   // -----------------------------------------------------------------------
 
   describe('play() — TxCommit', () => {
-    it('triggers the correct lane synth with the right note', async () => {
+    it('triggers the correct lane synth with the right note and 32n duration', async () => {
       await engine.init();
       engine.play(makeEvent({ type: GameEventType.TxCommit, lane: 2, note: 60 }));
 
-      expect(mockTriggerAttackRelease).toHaveBeenCalledWith('C4', '16n');
+      expect(mockTriggerAttackRelease).toHaveBeenCalledWith('C4', '32n');
     });
   });
 
@@ -177,7 +177,7 @@ describe('AudioEngine', () => {
   // -----------------------------------------------------------------------
 
   describe('rate limiter', () => {
-    it('allows first 20 plays then silently drops', async () => {
+    it('allows first 40 plays then silently drops', async () => {
       await engine.init();
 
       // Use a fixed performance.now to prevent token refill during the loop
@@ -185,15 +185,15 @@ describe('AudioEngine', () => {
       const spy = vi.spyOn(performance, 'now').mockReturnValue(fixedNow);
 
       const event = makeEvent({ type: GameEventType.TxCommit, note: 60 });
-      for (let i = 0; i < 25; i++) {
+      for (let i = 0; i < 45; i++) {
         engine.play(event);
       }
 
-      // Only the first 20 should fire (initial bucket = 20)
+      // Only the first 40 should fire (initial bucket = 40)
       // +1 because the bucket was just created with full tokens and one refill happens
-      // The exact count depends on timing — at least 20 should fire
-      expect(mockTriggerAttackRelease.mock.calls.length).toBeLessThanOrEqual(21);
-      expect(mockTriggerAttackRelease.mock.calls.length).toBeGreaterThanOrEqual(20);
+      // The exact count depends on timing — at least 40 should fire
+      expect(mockTriggerAttackRelease.mock.calls.length).toBeLessThanOrEqual(41);
+      expect(mockTriggerAttackRelease.mock.calls.length).toBeGreaterThanOrEqual(40);
 
       spy.mockRestore();
     });
@@ -265,6 +265,82 @@ describe('AudioEngine', () => {
     it('is a no-op when engine is not ready', () => {
       engine.play(makeEvent());
       expect(mockTriggerAttackRelease).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Error resilience — triggerAttackRelease throwing
+  // -----------------------------------------------------------------------
+
+  describe('error resilience', () => {
+    it('does not crash when triggerAttackRelease throws (polyphony exceeded)', async () => {
+      await engine.init();
+      mockTriggerAttackRelease.mockImplementationOnce(() => {
+        throw new Error('Max polyphony exceeded');
+      });
+
+      // Should not throw
+      expect(() => {
+        engine.play(makeEvent({ type: GameEventType.TxCommit, lane: 0, note: 60 }));
+      }).not.toThrow();
+
+      // Subsequent plays still work
+      mockTriggerAttackRelease.mockClear();
+      engine.play(makeEvent({ type: GameEventType.TxCommit, lane: 1, note: 64 }));
+      expect(mockTriggerAttackRelease).toHaveBeenCalledOnce();
+    });
+
+    it('does not crash when Conflict synth throws', async () => {
+      await engine.init();
+      mockTriggerAttackRelease.mockImplementationOnce(() => {
+        throw new Error('Max polyphony exceeded');
+      });
+
+      expect(() => {
+        engine.play(makeEvent({ type: GameEventType.Conflict, note: 60 }));
+      }).not.toThrow();
+    });
+
+    it('does not crash when BlockComplete synth throws', async () => {
+      await engine.init();
+      mockTriggerAttackRelease.mockImplementationOnce(() => {
+        throw new Error('Max polyphony exceeded');
+      });
+
+      expect(() => {
+        engine.play(makeEvent({ type: GameEventType.BlockComplete }));
+      }).not.toThrow();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // BlockComplete dedup guard
+  // -----------------------------------------------------------------------
+
+  describe('BlockComplete dedup', () => {
+    it('plays BlockComplete only once per simulation', async () => {
+      await engine.init();
+
+      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
+      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
+      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
+
+      // Only the first BlockComplete should trigger the chord
+      expect(mockTriggerAttackRelease).toHaveBeenCalledTimes(1);
+      expect(mockTriggerAttackRelease).toHaveBeenCalledWith(['C4', 'E4', 'G4'], '4n');
+    });
+
+    it('resets dedup flag after dispose + re-init', async () => {
+      await engine.init();
+      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
+      expect(mockTriggerAttackRelease).toHaveBeenCalledTimes(1);
+
+      engine.dispose();
+      mockTriggerAttackRelease.mockClear();
+
+      await engine.init();
+      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
+      expect(mockTriggerAttackRelease).toHaveBeenCalledTimes(1);
     });
   });
 });

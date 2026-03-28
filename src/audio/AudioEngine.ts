@@ -2,7 +2,7 @@
  * AudioEngine — Tone.js audio playback for monbeat game events.
  *
  * - Dynamic import('tone') to keep initial bundle < 200KB
- * - Token-bucket rate limiter (~20 sounds/sec)
+ * - Token-bucket rate limiter (~40 sounds/sec)
  * - 4 PolySynths (per-lane, different oscillator types) + 1 NoiseSynth
  * - Mute / pause / dispose lifecycle
  * - No React dependency — wired in via GameView
@@ -74,7 +74,11 @@ export class AudioEngine {
   private _ready = false;
   private _muted = false;
 
-  private limiter = new TokenBucket(20, 20);
+  private limiter = new TokenBucket(40, 40);
+
+  // Dedup guard: BlockComplete should only play once per simulation run.
+  // Reset on init() and dispose().
+  private blockCompletePlayed = false;
 
   // -----------------------------------------------------------------------
   // Lifecycle
@@ -122,6 +126,7 @@ export class AudioEngine {
     }).toDestination();
 
     this._ready = true;
+    this.blockCompletePlayed = false;
   }
 
   // -----------------------------------------------------------------------
@@ -139,25 +144,47 @@ export class AudioEngine {
 
     switch (event.type) {
       case GameEventType.TxCommit:
-        this.synths[lane]?.triggerAttackRelease(note, '16n');
+        try {
+          this.synths[lane]?.triggerAttackRelease(note, '32n');
+        } catch {
+          // Max polyphony exceeded — safe to drop
+        }
         break;
 
       case GameEventType.Conflict: {
         // Dissonant: play the note + one semitone above, plus noise
         const dissonant = midiToNote(Math.min(127, event.note + 1));
-        this.synths[0]?.triggerAttackRelease([note, dissonant], '8n');
-        this.noiseSynth?.triggerAttackRelease('16n');
+        try {
+          this.synths[0]?.triggerAttackRelease([note, dissonant], '8n');
+        } catch {
+          // Max polyphony exceeded — safe to drop
+        }
+        try {
+          this.noiseSynth?.triggerAttackRelease('16n');
+        } catch {
+          // Noise synth error — safe to drop
+        }
         break;
       }
 
       case GameEventType.ReExecution:
       case GameEventType.ReExecutionResolved:
-        this.synths[lane]?.triggerAttackRelease(note, '16n');
+        try {
+          this.synths[lane]?.triggerAttackRelease(note, '16n');
+        } catch {
+          // Max polyphony exceeded — safe to drop
+        }
         break;
 
       case GameEventType.BlockComplete:
-        // C-E-G major chord
-        this.synths[0]?.triggerAttackRelease(['C4', 'E4', 'G4'], '4n');
+        if (this.blockCompletePlayed) break;
+        this.blockCompletePlayed = true;
+        try {
+          // C-E-G major chord
+          this.synths[0]?.triggerAttackRelease(['C4', 'E4', 'G4'], '4n');
+        } catch {
+          // Max polyphony exceeded — safe to drop
+        }
         break;
     }
   }
@@ -223,5 +250,6 @@ export class AudioEngine {
     this.tone = null;
     this._ready = false;
     this._muted = false;
+    this.blockCompletePlayed = false;
   }
 }

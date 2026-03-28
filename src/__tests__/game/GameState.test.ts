@@ -107,12 +107,27 @@ describe('GameState', () => {
       expect(gs.mode).toBe('ws');
     });
 
-    it('should not spawn blocks until finalizeBatches is called', () => {
+    it('should not spawn blocks from a single event without finalizeBatches', () => {
       const gs = new GameState();
       gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+      // A single event sits in the open batch — not yet ready for dispatch
       gs.pushEvent(makeEvent());
       gs.update(1.0);
       expect(gs.activeTxBlocks.size).toBe(0);
+    });
+
+    it('should close batch progressively when timestamp gap detected', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      // First event — opens a batch
+      gs.pushEvent(makeEvent({ lane: 0, timestamp: 0.0 }));
+      // Second event with gap > 50ms — closes first batch, starts new one
+      gs.pushEvent(makeEvent({ lane: 1, timestamp: 0.5 }));
+
+      // First batch (1 event) should be ready BEFORE finalizeBatches
+      gs.update(0.01);
+      expect(gs.activeTxBlocks.size).toBe(1);
     });
   });
 
@@ -225,6 +240,103 @@ describe('GameState', () => {
     it('should point to txPool.active', () => {
       const gs = new GameState();
       expect(gs.activeTxBlocks).toBe(gs.txPool.active);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Streaming dispatch (progressive batching)
+  // -----------------------------------------------------------------------
+
+  describe('streaming dispatch', () => {
+    it('should spawn blocks before finalizeBatches when timestamp gaps exist', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      // Batch 1: t=0.0 (parallel)
+      gs.pushEvent(makeEvent({ lane: 0, timestamp: 0.0 }));
+      gs.pushEvent(makeEvent({ lane: 1, timestamp: 0.01 }));
+      // Gap → closes batch 1
+      gs.pushEvent(makeEvent({ lane: 2, timestamp: 0.5 }));
+
+      // Batch 1 is ready — dispatch WITHOUT calling finalizeBatches
+      gs.update(0.01);
+      expect(gs.activeTxBlocks.size).toBe(2); // batch 1 spawned
+    });
+
+    it('should progressively dispatch multiple batches as events stream in', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      // Stream 3 batches with gaps
+      gs.pushEvent(makeEvent({ lane: 0, timestamp: 0.0 }));
+      gs.pushEvent(makeEvent({ lane: 1, timestamp: 0.5 })); // closes batch 1
+      gs.pushEvent(makeEvent({ lane: 2, timestamp: 1.0 })); // closes batch 2
+
+      // First batch dispatches immediately (timer primed to BATCH_INTERVAL)
+      gs.update(0.01);
+      expect(gs.activeTxBlocks.size).toBe(1); // batch 1
+
+      // After BATCH_INTERVAL, batch 2 dispatches
+      gs.update(0.45);
+      expect(gs.activeTxBlocks.size).toBe(2); // batch 1 + 2
+
+      // Finalize to close last open batch (1 event at t=1.0)
+      gs.finalizeBatches();
+      gs.update(0.45);
+      expect(gs.activeTxBlocks.size).toBe(3); // all 3
+    });
+
+    it('finalizeBatches on single-batch stream should still work', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      // All events in same batch (no gaps)
+      gs.pushEvent(makeEvent({ lane: 0, timestamp: 0.0 }));
+      gs.pushEvent(makeEvent({ lane: 1, timestamp: 0.01 }));
+      gs.pushEvent(makeEvent({ lane: 2, timestamp: 0.02 }));
+
+      // No gaps → nothing dispatched yet
+      gs.update(1.0);
+      expect(gs.activeTxBlocks.size).toBe(0);
+
+      // finalizeBatches closes the open batch
+      gs.finalizeBatches();
+      gs.update(0.01);
+      expect(gs.activeTxBlocks.size).toBe(3);
+    });
+
+    it('should handle 300+ events without performance degradation', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      // Generate 300 events across multiple batches
+      const NUM_EVENTS = 300;
+      let timestamp = 0;
+      for (let i = 0; i < NUM_EVENTS; i++) {
+        const lane = i % 4;
+        const type = i % 10 === 0
+          ? GameEventType.Conflict
+          : i % 15 === 0
+            ? GameEventType.ReExecution
+            : GameEventType.TxCommit;
+        gs.pushEvent(makeEvent({ lane, timestamp, type, txIndex: i }));
+        // Every 4 events, jump timestamp to create a new batch
+        if ((i + 1) % 4 === 0) {
+          timestamp += 0.1;
+        }
+      }
+      gs.finalizeBatches();
+
+      // Run enough updates to dispatch all batches (75 batches × 0.4s = 30s)
+      let totalSpawned = 0;
+      for (let i = 0; i < 200; i++) {
+        gs.update(0.2);
+        totalSpawned = gs.stats.txCount;
+      }
+
+      expect(totalSpawned).toBe(NUM_EVENTS);
+      expect(gs.stats.conflicts).toBeGreaterThan(0);
+      expect(gs.stats.reExecutions).toBeGreaterThan(0);
     });
   });
 });

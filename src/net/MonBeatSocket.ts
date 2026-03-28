@@ -94,16 +94,22 @@ export class MonBeatSocket {
   /**
    * Send a simulate command with Solidity source code.
    * Must be connected (state === 'connected').
+   *
+   * @param source  Solidity source code
+   * @param repeatCount  How many times to repeat TX functions (server default if omitted)
    */
-  simulate(source: string): void {
+  simulate(source: string, repeatCount?: number): void {
     if (!this.ws || this._state !== 'connected') {
       this.callbacks.onError?.('Cannot simulate: not connected');
       return;
     }
 
     this.setState('simulating');
-    const payload = JSON.stringify({ action: 'simulate', source });
-    this.ws.send(payload);
+    const payload: Record<string, unknown> = { action: 'simulate', source };
+    if (repeatCount !== undefined) {
+      payload.repeat_count = repeatCount;
+    }
+    this.ws.send(JSON.stringify(payload));
   }
 
   /**

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { TxBlock } from '../../entities/TxBlock';
 import { GameEventType, EVENT_COLORS } from '../../net/types';
 
@@ -209,6 +209,57 @@ describe('TxBlock', () => {
       block.init(2, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecution);
       expect(block.eventType).toBe(GameEventType.ReExecution);
       expect(block.color).toBe(EVENT_COLORS[GameEventType.ReExecution]);
+    });
+  });
+
+  describe('clearGraphics()', () => {
+    it('should call removeFromParent and destroy on attached graphics', () => {
+      const block = new TxBlock();
+      const mockGfx = { removeFromParent: vi.fn(), destroy: vi.fn() };
+      block.graphics = mockGfx;
+
+      block.clearGraphics();
+
+      expect(mockGfx.removeFromParent).toHaveBeenCalledTimes(1);
+      expect(mockGfx.destroy).toHaveBeenCalledTimes(1);
+      expect(block.graphics).toBeNull();
+    });
+
+    it('should be a no-op when graphics is null', () => {
+      const block = new TxBlock();
+      expect(block.graphics).toBeNull();
+      // Should not throw
+      block.clearGraphics();
+      expect(block.graphics).toBeNull();
+    });
+
+    it('should tolerate graphics without removeFromParent/destroy', () => {
+      const block = new TxBlock();
+      block.graphics = {}; // bare object, no methods
+      block.clearGraphics();
+      expect(block.graphics).toBeNull();
+    });
+  });
+
+  describe('reset() clears graphics', () => {
+    it('should call clearGraphics when reset is called with attached graphics', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      const mockGfx = { removeFromParent: vi.fn(), destroy: vi.fn() };
+      block.graphics = mockGfx;
+
+      block.reset();
+
+      expect(mockGfx.removeFromParent).toHaveBeenCalledTimes(1);
+      expect(mockGfx.destroy).toHaveBeenCalledTimes(1);
+      expect(block.graphics).toBeNull();
+    });
+
+    it('should reset graphics field to null even without explicit clearGraphics', () => {
+      const block = new TxBlock();
+      block.graphics = { removeFromParent: vi.fn(), destroy: vi.fn() };
+      block.reset();
+      expect(block.graphics).toBeNull();
     });
   });
 });

@@ -179,6 +179,29 @@ describe('MonBeatSocket — simulate', () => {
     expect(sent.source).toContain('pragma solidity');
   });
 
+  it('sends repeat_count in JSON payload when provided', () => {
+    const socket = new MonBeatSocket();
+    socket.connect('ws://localhost:8080/ws');
+    lastMock().simulateOpen();
+
+    socket.simulate('contract C {}', 100);
+    const sent = JSON.parse(lastMock().sent[0]);
+    expect(sent.action).toBe('simulate');
+    expect(sent.source).toBe('contract C {}');
+    expect(sent.repeat_count).toBe(100);
+  });
+
+  it('omits repeat_count from payload when not provided', () => {
+    const socket = new MonBeatSocket();
+    socket.connect('ws://localhost:8080/ws');
+    lastMock().simulateOpen();
+
+    socket.simulate('contract C {}');
+    const sent = JSON.parse(lastMock().sent[0]);
+    expect(sent.action).toBe('simulate');
+    expect(sent).not.toHaveProperty('repeat_count');
+  });
+
   it('errors if simulate called when not connected', () => {
     const errors: string[] = [];
     const socket = new MonBeatSocket();

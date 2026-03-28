@@ -1,0 +1,100 @@
+/**
+ * PixiBlockGraphics — Factory functions for creating and positioning
+ * PixiJS Graphics objects that represent TxBlocks.
+ *
+ * Draws a rounded rectangle filled with the block's event-type color.
+ * Glow effects (via GlowFilter) are conditionally applied for non-commit
+ * event types — controlled by AdaptivePerformance.enableGlow at the
+ * caller level.
+ *
+ * Icon sprites (pre-rendered textures) are attached as children of each
+ * block's Graphics for zero per-frame text rendering cost.
+ */
+
+import { Graphics, Sprite, type Texture } from 'pixi.js';
+import { GlowFilter } from 'pixi-filters';
+import type { TxBlock } from '../entities/TxBlock';
+import { GameEventType } from '../net/types';
+
+/** Glow hex colors per event type (alpha handled by filter). */
+const GLOW_HEX: Partial<Record<number, number>> = {
+  [GameEventType.Conflict]: 0xef4444,
+  [GameEventType.ReExecution]: 0xfacc15,
+  [GameEventType.ReExecutionResolved]: 0x60a5fa,
+  [GameEventType.BlockComplete]: 0xc084fc,
+};
+
+/** Icon/label for each event type, rendered as centered text. */
+const EVENT_ICONS: Record<number, string> = {
+  [GameEventType.TxCommit]: '✓',
+  [GameEventType.Conflict]: '⚡',
+  [GameEventType.ReExecution]: '↻',
+  [GameEventType.ReExecutionResolved]: '✓',
+  [GameEventType.BlockComplete]: '★',
+};
+
+const CORNER_RADIUS = 5;
+
+export interface BlockGraphicsOptions {
+  enableGlow?: boolean;
+  iconTexture?: Texture;
+}
+
+/**
+ * Create a PixiJS Graphics for a TxBlock — rounded rect filled with
+ * the block's color at the block's current position.
+ *
+ * If `enableGlow` is true and the block's event type is not TxCommit,
+ * a GPU-accelerated GlowFilter is applied matching the event color.
+ *
+ * If `iconTexture` is provided, a Sprite child is added at the block center.
+ */
+export function createBlockGraphics(
+  block: TxBlock,
+  options?: BlockGraphicsOptions,
+): Graphics {
+  const gfx = new Graphics();
+
+  // Draw rounded rect
+  gfx.roundRect(0, 0, block.width, block.height, CORNER_RADIUS);
+  gfx.fill(block.color);
+
+  // Position to match entity
+  gfx.position.set(block.x, block.y);
+
+  // ── GlowFilter for non-TxCommit blocks when enabled ──
+  const enableGlow = options?.enableGlow ?? false;
+  if (enableGlow && block.eventType !== GameEventType.TxCommit) {
+    const glowColor = GLOW_HEX[block.eventType];
+    if (glowColor !== undefined) {
+      const filter = new GlowFilter({
+        distance: 12,
+        outerStrength: 1,
+        color: glowColor,
+      });
+      gfx.filters = [filter];
+    }
+  }
+
+  // ── Icon sprite child ──
+  const iconTexture = options?.iconTexture;
+  if (iconTexture) {
+    const sprite = new Sprite(iconTexture);
+    sprite.anchor.set(0.5, 0.5);
+    sprite.position.set(block.width / 2, block.height / 2);
+    gfx.addChild(sprite);
+  }
+
+  return gfx;
+}
+
+/**
+ * Update a Graphics object's position to match its TxBlock entity.
+ * Called every frame via PixiRenderer.syncBlocks().
+ */
+export function updateBlockPosition(gfx: Graphics, block: TxBlock): void {
+  gfx.position.set(block.x, block.y);
+}
+
+/** Exposed for tests — event icons map. */
+export { EVENT_ICONS, GLOW_HEX };
