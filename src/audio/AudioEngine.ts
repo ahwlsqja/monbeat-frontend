@@ -1,10 +1,16 @@
 /**
  * AudioEngine — Tone.js audio playback for monbeat game events.
  *
+ * Sound design: cyberpunk/synthwave aesthetic
+ * - PolySynth wrappers (polyphonic) with FM voice for rich sound
+ * - TxCommit: percussive metallic click per lane
+ * - Conflict: dissonant glitch + noise burst
+ * - ReExecution: clean FM with delay
+ * - BlockComplete: wide pad chord with long reverb tail
+ * - All triggers use Tone.now() + offset to prevent "Start time" errors
+ *
  * - Dynamic import('tone') to keep initial bundle < 200KB
  * - Token-bucket rate limiter (~40 sounds/sec)
- * - 4 PolySynths (per-lane, different oscillator types) + 1 NoiseSynth
- * - Mute / pause / dispose lifecycle
  * - No React dependency — wired in via GameView
  */
 
@@ -36,15 +42,13 @@ class TokenBucket {
     return false;
   }
 
-  /** Refill tokens based on elapsed time. */
   private refill(): void {
     const now = performance.now();
-    const elapsed = (now - this.lastRefill) / 1000; // seconds
+    const elapsed = (now - this.lastRefill) / 1000;
     this.tokens = Math.min(this.maxTokens, this.tokens + elapsed * this.refillRate);
     this.lastRefill = now;
   }
 
-  /** Reset bucket to full (used after pause/resume). */
   reset(): void {
     this.tokens = this.maxTokens;
     this.lastRefill = performance.now();
@@ -56,113 +60,161 @@ class TokenBucket {
 // ---------------------------------------------------------------------------
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ToneModule = any; // Tone.js doesn't export a single namespace type cleanly
+type ToneModule = any;
 
-const SYNTH_VOLUME = -18; // dB
-const NOISE_VOLUME = -24; // dB
+const MASTER_VOLUME = -14; // dB
 
 export class AudioEngine {
-  // Tone.js module — null until init()
   private tone: ToneModule | null = null;
 
-  // Synths — one PolySynth per lane (0-3), one NoiseSynth for conflict texture
+  // All synths are PolySynth (polyphonic) — avoids "Start time" monophonic errors
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private synths: any[] = [];
+  private commitSynths: any[] = []; // 4 lanes
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private conflictSynth: any | null = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private noiseSynth: any | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private reexecSynth: any | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private completeSynth: any | null = null;
+
+  // Effects
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private reverb: any | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private delay: any | null = null;
 
   private _ready = false;
   private _muted = false;
-
   private limiter = new TokenBucket(40, 40);
-
-  // Dedup guard: BlockComplete should only play once per simulation run.
-  // Reset on init() and dispose().
   private blockCompletePlayed = false;
 
-  // -----------------------------------------------------------------------
-  // Lifecycle
-  // -----------------------------------------------------------------------
+  // Monotonic time counter to prevent same-time triggers
+  private lastTriggerTime = 0;
 
-  get ready(): boolean {
-    return this._ready;
+  get ready(): boolean { return this._ready; }
+  get muted(): boolean { return this._muted; }
+
+  private nextTime(): number {
+    if (!this.tone) return 0;
+    const now = this.tone.now();
+    // Ensure each trigger is at least 1ms after the previous
+    this.lastTriggerTime = Math.max(now, this.lastTriggerTime + 0.001);
+    return this.lastTriggerTime;
   }
 
-  get muted(): boolean {
-    return this._muted;
-  }
-
-  /**
-   * Dynamically import Tone.js, start the AudioContext (must be inside a
-   * user-gesture handler on iOS Safari), and create synths.
-   */
   async init(): Promise<void> {
     if (this._ready) return;
 
     const Tone = await import('tone');
     this.tone = Tone;
-
-    // Resume / start the AudioContext (required for iOS Safari)
     await Tone.start();
 
-    const oscillatorTypes = ['triangle', 'sine', 'square', 'sawtooth'] as const;
+    // --- Effects ---
+    this.reverb = new Tone.Reverb({ decay: 2.0, wet: 0.25 }).toDestination();
+    await this.reverb.generate();
 
-    this.synths = oscillatorTypes.map(
+    this.delay = new Tone.FeedbackDelay({
+      delayTime: '16n',
+      feedback: 0.2,
+      wet: 0.15,
+    }).connect(this.reverb);
+
+    // --- TxCommit: percussive metallic PolySynth per lane ---
+    // Different oscillator types give each lane a distinct timbre
+    const oscTypes: Array<'triangle' | 'sine' | 'square' | 'sawtooth'> = [
+      'triangle', 'sine', 'square', 'sawtooth',
+    ];
+    this.commitSynths = oscTypes.map(
       (type) =>
         new Tone.PolySynth({
-          maxPolyphony: 8,
+          maxPolyphony: 4,
           voice: Tone.Synth,
           options: {
             oscillator: { type },
-            envelope: { attack: 0.01, decay: 0.2, sustain: 0.05, release: 0.3 },
-            volume: SYNTH_VOLUME,
+            envelope: { attack: 0.002, decay: 0.08, sustain: 0, release: 0.05 },
+            volume: MASTER_VOLUME,
           },
-        }).toDestination(),
+        }).connect(this.reverb),
     );
 
+    // --- Conflict: harsh metallic buzz ---
+    this.conflictSynth = new Tone.PolySynth({
+      maxPolyphony: 4,
+      voice: Tone.Synth,
+      options: {
+        oscillator: { type: 'sawtooth' },
+        envelope: { attack: 0.001, decay: 0.12, sustain: 0.05, release: 0.08 },
+        volume: MASTER_VOLUME - 4,
+      },
+    }).connect(this.reverb);
+
+    // --- Noise burst for conflict texture ---
     this.noiseSynth = new Tone.NoiseSynth({
-      volume: NOISE_VOLUME,
-      envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 },
-    }).toDestination();
+      noise: { type: 'pink' },
+      volume: MASTER_VOLUME - 16,
+      envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.02 },
+    }).connect(this.reverb);
+
+    // --- ReExecution: clean tone with delay tail ---
+    this.reexecSynth = new Tone.PolySynth({
+      maxPolyphony: 4,
+      voice: Tone.Synth,
+      options: {
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.01, decay: 0.15, sustain: 0.1, release: 0.2 },
+        volume: MASTER_VOLUME - 2,
+      },
+    }).connect(this.delay);
+
+    // --- BlockComplete: wide chord with long reverb ---
+    this.completeSynth = new Tone.PolySynth({
+      maxPolyphony: 6,
+      voice: Tone.Synth,
+      options: {
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.3, decay: 0.8, sustain: 0.4, release: 1.5 },
+        volume: MASTER_VOLUME - 6,
+      },
+    }).connect(this.reverb);
 
     this._ready = true;
     this.blockCompletePlayed = false;
+    this.lastTriggerTime = 0;
   }
 
   // -----------------------------------------------------------------------
   // Playback
   // -----------------------------------------------------------------------
 
-  /**
-   * Play a sound for a GameEvent. No-op if not ready, muted, or rate-limited.
-   */
   play(event: GameEvent): void {
     if (!this._ready || this._muted || !this.limiter.canConsume()) return;
 
     const note = midiToNote(event.note);
     const lane = Math.max(0, Math.min(3, event.lane));
+    const time = this.nextTime();
 
     switch (event.type) {
       case GameEventType.TxCommit:
         try {
-          this.synths[lane]?.triggerAttackRelease(note, '32n');
+          this.commitSynths[lane]?.triggerAttackRelease(note, '32n', time);
         } catch {
-          // Max polyphony exceeded — safe to drop
+          // safe to drop
         }
         break;
 
       case GameEventType.Conflict: {
-        // Dissonant: play the note + one semitone above, plus noise
         const dissonant = midiToNote(Math.min(127, event.note + 1));
         try {
-          this.synths[0]?.triggerAttackRelease([note, dissonant], '8n');
+          this.conflictSynth?.triggerAttackRelease(dissonant, '16n', time);
         } catch {
-          // Max polyphony exceeded — safe to drop
+          // safe to drop
         }
         try {
-          this.noiseSynth?.triggerAttackRelease('16n');
+          this.noiseSynth?.triggerAttackRelease('32n', time);
         } catch {
-          // Noise synth error — safe to drop
+          // safe to drop
         }
         break;
       }
@@ -170,9 +222,9 @@ export class AudioEngine {
       case GameEventType.ReExecution:
       case GameEventType.ReExecutionResolved:
         try {
-          this.synths[lane]?.triggerAttackRelease(note, '16n');
+          this.reexecSynth?.triggerAttackRelease(note, '16n', time);
         } catch {
-          // Max polyphony exceeded — safe to drop
+          // safe to drop
         }
         break;
 
@@ -180,10 +232,11 @@ export class AudioEngine {
         if (this.blockCompletePlayed) break;
         this.blockCompletePlayed = true;
         try {
-          // C-E-G major chord
-          this.synths[0]?.triggerAttackRelease(['C4', 'E4', 'G4'], '4n');
+          this.completeSynth?.triggerAttackRelease(
+            ['C4', 'E4', 'G4', 'B4'], '2n', time,
+          );
         } catch {
-          // Max polyphony exceeded — safe to drop
+          // safe to drop
         }
         break;
     }
@@ -193,63 +246,51 @@ export class AudioEngine {
   // Mute / Pause / Dispose
   // -----------------------------------------------------------------------
 
-  mute(): void {
-    this._muted = true;
-  }
+  mute(): void { this._muted = true; }
+  unmute(): void { this._muted = false; }
 
-  unmute(): void {
-    this._muted = false;
-  }
-
-  /**
-   * Suspend the AudioContext (e.g. on visibility hidden).
-   */
   async pause(): Promise<void> {
     if (!this.tone) return;
     try {
       const ctx = this.tone.getContext();
       await ctx.rawContext?.suspend?.();
-    } catch {
-      // Context may already be suspended — safe to ignore
-    }
+    } catch { /* safe */ }
   }
 
-  /**
-   * Resume the AudioContext (e.g. on visibility visible).
-   */
   async resume(): Promise<void> {
     if (!this.tone) return;
     try {
       const ctx = this.tone.getContext();
       await ctx.rawContext?.resume?.();
       this.limiter.reset();
-    } catch {
-      // Context may already be running — safe to ignore
-    }
+    } catch { /* safe */ }
   }
 
-  /**
-   * Dispose all synths and release the Tone.js module reference.
-   */
   dispose(): void {
-    for (const synth of this.synths) {
-      try {
-        synth?.dispose();
-      } catch {
-        // Already disposed — safe to ignore
-      }
-    }
-    try {
-      this.noiseSynth?.dispose();
-    } catch {
-      // Already disposed
+    const disposables = [
+      ...this.commitSynths,
+      this.conflictSynth,
+      this.noiseSynth,
+      this.reexecSynth,
+      this.completeSynth,
+      this.reverb,
+      this.delay,
+    ];
+    for (const node of disposables) {
+      try { node?.dispose(); } catch { /* already disposed */ }
     }
 
-    this.synths = [];
+    this.commitSynths = [];
+    this.conflictSynth = null;
     this.noiseSynth = null;
+    this.reexecSynth = null;
+    this.completeSynth = null;
+    this.reverb = null;
+    this.delay = null;
     this.tone = null;
     this._ready = false;
     this._muted = false;
     this.blockCompletePlayed = false;
+    this.lastTriggerTime = 0;
   }
 }
