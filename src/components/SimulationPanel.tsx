@@ -28,19 +28,34 @@ const GameView = dynamic(() => import('./GameView'), {
 const COUNTER_SOURCE = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract Counter {
-    uint256 public count;
+// UserVault — each sender has an independent balance (mapping slot).
+// Parallel execution: different senders touch different storage slots,
+// so most TXs can execute in parallel without conflicts.
+// Shared-state functions (totalDeposits) create realistic conflicts.
 
-    function increment() public {
-        count += 1;
+contract UserVault {
+    mapping(address => uint256) public balances;
+    uint256 public totalDeposits;
+
+    function deposit() public {
+        balances[msg.sender] += 100;
+        totalDeposits += 100;
     }
 
-    function decrement() public {
-        count -= 1;
+    function withdraw() public {
+        uint256 bal = balances[msg.sender];
+        if (bal >= 50) {
+            balances[msg.sender] -= 50;
+            totalDeposits -= 50;
+        }
     }
 
-    function reset() public {
-        count = 0;
+    function transfer(address to) public {
+        uint256 bal = balances[msg.sender];
+        if (bal >= 10) {
+            balances[msg.sender] -= 10;
+            balances[to] += 10;
+        }
     }
 }`;
 
