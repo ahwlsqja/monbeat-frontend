@@ -334,11 +334,13 @@ export class PixiRenderer {
 
   /** Manual render call — replaces PixiJS auto ticker. */
   render(): void {
+    if (!this.app?.renderer) return;
     this.app.renderer.render(this.app.stage);
   }
 
   /** Resize the renderer + redraw the background layer. */
   resize(width: number, height: number): void {
+    if (!this.app?.renderer) return;
     this.app.renderer.resize(width, height);
     this.drawBackground(width, height);
   }
