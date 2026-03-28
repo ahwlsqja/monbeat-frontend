@@ -278,7 +278,6 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     >
       {/* PixiJS appends its canvas to containerRef — no manual <canvas> elements */}
       <HUD perfMonitor={perfMonitor} />
-      <StatsHUD statsRef={statsRef} completionStatsRef={completionStatsRef} />
 
       {/* Simulation control bar */}
       <div
