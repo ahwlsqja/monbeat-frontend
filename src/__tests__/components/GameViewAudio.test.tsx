@@ -32,6 +32,31 @@ vi.mock('../../audio/AudioEngine', () => ({
   })),
 }));
 
+// HarmonicEngine mock
+const mockHarmonicInit = vi.fn().mockResolvedValue(undefined);
+const mockHarmonicPlay = vi.fn();
+const mockHarmonicMute = vi.fn();
+const mockHarmonicUnmute = vi.fn();
+const mockHarmonicPause = vi.fn();
+const mockHarmonicResume = vi.fn();
+const mockHarmonicDispose = vi.fn();
+const mockHarmonicReset = vi.fn();
+let mockHarmonicReady = false;
+
+vi.mock('../../audio/HarmonicEngine', () => ({
+  HarmonicEngine: vi.fn().mockImplementation(() => ({
+    init: mockHarmonicInit,
+    play: mockHarmonicPlay,
+    mute: mockHarmonicMute,
+    unmute: mockHarmonicUnmute,
+    pause: mockHarmonicPause,
+    resume: mockHarmonicResume,
+    dispose: mockHarmonicDispose,
+    reset: mockHarmonicReset,
+    get ready() { return mockHarmonicReady; },
+  })),
+}));
+
 // AdaptivePerformance mock
 let mockTier = 'high';
 const mockAdaptiveDispose = vi.fn();
@@ -169,6 +194,7 @@ global.ResizeObserver = vi.fn().mockImplementation(() => ({
 // ---------------------------------------------------------------------------
 import GameView from '../../components/GameView';
 import { AudioEngine } from '../../audio/AudioEngine';
+import { HarmonicEngine } from '../../audio/HarmonicEngine';
 import { AdaptivePerformance } from '../../engine/AdaptivePerformance';
 
 // ---------------------------------------------------------------------------
@@ -179,6 +205,7 @@ describe('GameView — Audio + AdaptivePerformance wiring', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockReady = false;
+    mockHarmonicReady = false;
     mockTier = 'high';
     capturedCallbacks = {};
   });
@@ -396,5 +423,118 @@ describe('GameView — Audio + AdaptivePerformance wiring', () => {
 
     // No crash, no play call since audioEngineRef is null
     expect(mockPlay).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // HarmonicEngine integration tests
+  // -----------------------------------------------------------------------
+
+  it('inits HarmonicEngine on simulate click alongside AudioEngine', async () => {
+    render(<GameView />);
+
+    const simBtn = screen.getByTestId('btn-simulate');
+    await act(async () => {
+      fireEvent.click(simBtn);
+    });
+
+    // Both engines should be constructed and initialized
+    expect(AudioEngine).toHaveBeenCalledTimes(1);
+    expect(HarmonicEngine).toHaveBeenCalledTimes(1);
+    expect(mockInit).toHaveBeenCalledTimes(1);
+    expect(mockHarmonicInit).toHaveBeenCalledTimes(1);
+    // HarmonicEngine.reset() called to start chord progression from beginning
+    expect(mockHarmonicReset).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes HarmonicEngine on unmount', async () => {
+    render(<GameView />);
+
+    // Init both engines via simulate click
+    const simBtn = screen.getByTestId('btn-simulate');
+    await act(async () => {
+      fireEvent.click(simBtn);
+    });
+
+    expect(HarmonicEngine).toHaveBeenCalled();
+
+    cleanup();
+    expect(mockHarmonicDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('pauses/resumes HarmonicEngine on visibility change', async () => {
+    render(<GameView />);
+
+    // Init engines
+    const simBtn = screen.getByTestId('btn-simulate');
+    await act(async () => {
+      fireEvent.click(simBtn);
+    });
+
+    // Simulate document becoming hidden
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(mockHarmonicPause).toHaveBeenCalledTimes(1);
+
+    // Restore visibility
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(mockHarmonicResume).toHaveBeenCalledTimes(1);
+  });
+
+  it('mutes/unmutes HarmonicEngine on audio toggle', async () => {
+    render(<GameView />);
+
+    // Init engines
+    const simBtn = screen.getByTestId('btn-simulate');
+    await act(async () => {
+      fireEvent.click(simBtn);
+    });
+
+    const btn = screen.getByTestId('btn-audio-toggle');
+
+    // Click to disable → mutes both engines
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(mockMute).toHaveBeenCalled();
+    expect(mockHarmonicMute).toHaveBeenCalledTimes(1);
+
+    // Click to enable → unmutes both engines
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(mockUnmute).toHaveBeenCalled();
+    expect(mockHarmonicUnmute).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets HarmonicEngine chord progression on each simulate', async () => {
+    render(<GameView />);
+
+    const simBtn = screen.getByTestId('btn-simulate');
+
+    // First simulate
+    await act(async () => {
+      fireEvent.click(simBtn);
+    });
+    expect(mockHarmonicReset).toHaveBeenCalledTimes(1);
+
+    // Set ready=true so second click doesn't re-init AudioEngine,
+    // but HarmonicEngine.reset() should still be called
+    mockReady = true;
+    mockHarmonicReady = true;
+
+    // Second simulate — reset called again for fresh chord progression
+    await act(async () => {
+      fireEvent.click(simBtn);
+    });
+    expect(mockHarmonicReset).toHaveBeenCalledTimes(2);
+    // init should only be called once (already ready on second click)
+    expect(mockHarmonicInit).toHaveBeenCalledTimes(1);
   });
 });

@@ -5,6 +5,7 @@ import { GameLoop } from '../engine/GameLoop';
 import { PerfMonitor } from '../engine/PerfMonitor';
 import { AdaptivePerformance } from '../engine/AdaptivePerformance';
 import { AudioEngine } from '../audio/AudioEngine';
+import { HarmonicEngine } from '../audio/HarmonicEngine';
 import { GameState } from '../game/GameState';
 import type { LiveStats } from '../game/GameState';
 import { MonBeatSocket } from '../net/MonBeatSocket';
@@ -52,6 +53,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
 
   // Audio + adaptive performance
   const audioEngineRef = useRef<AudioEngine | null>(null);
+  const harmonicRef = useRef<HarmonicEngine | null>(null);
   const adaptiveRef = useRef<AdaptivePerformance | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(true);
 
@@ -101,6 +103,11 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
         audioEngineRef.current?.play(event);
       } catch {
         // audio error — safe to drop
+      }
+      try {
+        harmonicRef.current?.play(event);
+      } catch {
+        // harmonic error — safe to drop
       }
     };
 
@@ -191,8 +198,10 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     const handleVisibility = () => {
       if (document.hidden) {
         audioEngineRef.current?.pause();
+        harmonicRef.current?.pause();
       } else {
         audioEngineRef.current?.resume();
+        harmonicRef.current?.resume();
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
@@ -205,6 +214,8 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       adaptiveRef.current = null;
       audioEngineRef.current?.dispose();
       audioEngineRef.current = null;
+      harmonicRef.current?.dispose();
+      harmonicRef.current = null;
       socket.disconnect();
       socketRef.current = null;
       loop.stop();
@@ -230,6 +241,17 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       }
       await audioEngineRef.current.init();
       audioEngineRef.current.startBGM();
+    }
+
+    // Init HarmonicEngine alongside AudioEngine — Tone.js also needs user gesture
+    if (audioEnabled) {
+      if (!harmonicRef.current) {
+        harmonicRef.current = new HarmonicEngine();
+      }
+      if (!harmonicRef.current.ready) {
+        await harmonicRef.current.init();
+      }
+      harmonicRef.current.reset(); // reset chord progression for new simulation
     }
 
     // Clear visual state for new simulation
@@ -267,8 +289,10 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
         await audioEngineRef.current.init();
       }
       audioEngineRef.current.unmute();
+      harmonicRef.current?.unmute();
     } else {
       audioEngineRef.current?.mute();
+      harmonicRef.current?.mute();
     }
   }, [audioEnabled]);
 
