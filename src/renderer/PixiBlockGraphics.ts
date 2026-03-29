@@ -85,15 +85,41 @@ export function createBlockGraphics(
     gfx.addChild(sprite);
   }
 
+  // ── Flash overlay for ReExecutionResolved blocks ──
+  if (block.eventType === GameEventType.ReExecutionResolved) {
+    const flash = new Graphics();
+    flash.roundRect(0, 0, block.width, block.height, CORNER_RADIUS);
+    flash.fill(0xffffff); // white
+    flash.alpha = 1; // starts fully opaque, faded by updateBlockPosition
+    gfx.addChild(flash);
+    (gfx as Graphics & { __flashOverlay?: Graphics }).__flashOverlay = flash;
+  }
+
   return gfx;
 }
 
 /**
  * Update a Graphics object's position to match its TxBlock entity.
+ * Applies horizontal shake offset (±3px) for ReExecution blocks.
  * Called every frame via PixiRenderer.syncBlocks().
  */
 export function updateBlockPosition(gfx: Graphics, block: TxBlock): void {
-  gfx.position.set(block.x, block.y);
+  let xPos = block.x;
+  // ── Shake offset for ReExecution (type 3) blocks ──
+  if (block.eventType === GameEventType.ReExecution && block.shakePhase !== 0) {
+    xPos += Math.sin(block.shakePhase) * 3; // ±3px at 15Hz
+  }
+  gfx.position.set(xPos, block.y);
+
+  // ── Fade flash overlay for ReExecutionResolved (type 4) blocks ──
+  if (block.eventType === GameEventType.ReExecutionResolved) {
+    const flashOverlay = (gfx as Graphics & { __flashOverlay?: Graphics }).__flashOverlay;
+    if (flashOverlay) {
+      const FLASH_DURATION = 0.2; // 200ms fade
+      const alpha = Math.max(0, 1 - block.flashElapsed / FLASH_DURATION);
+      flashOverlay.alpha = alpha;
+    }
+  }
 }
 
 /** Exposed for tests — event icons map. */

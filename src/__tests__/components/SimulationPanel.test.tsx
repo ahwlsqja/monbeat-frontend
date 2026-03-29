@@ -49,7 +49,7 @@ describe('SimulationPanel', () => {
     render(<SimulationPanel />);
     const textarea = screen.getByTestId('source-input') as HTMLTextAreaElement;
     expect(textarea).toBeTruthy();
-    expect(textarea.value).toContain('contract Counter');
+    expect(textarea.value).toContain('contract MultiWallet');
   });
 
   it('shows Play button in input phase', () => {

@@ -231,6 +231,8 @@ function makeTxBlock(overrides?: Partial<TxBlock>): TxBlock {
     speed: 200,
     commitZoneY: 510,
     eventType: GameEventType.TxCommit,
+    shakePhase: 0,
+    flashElapsed: 0,
     init: vi.fn(),
     update: vi.fn(),
     isAtCommitZone: vi.fn(() => false),
@@ -462,8 +464,8 @@ describe('PixiRenderer', () => {
     const blocks = new Set<TxBlock>([b1, b2]);
     renderer.syncBlocks(blocks);
 
-    const gfx1 = PixiRenderer._getBlockGraphics(b1) as unknown as InstanceType<typeof mockState.MockGraphics>;
-    const gfx2 = PixiRenderer._getBlockGraphics(b2) as unknown as InstanceType<typeof mockState.MockGraphics>;
+    const gfx1 = renderer._getBlockGraphics(b1) as unknown as InstanceType<typeof mockState.MockGraphics>;
+    const gfx2 = renderer._getBlockGraphics(b2) as unknown as InstanceType<typeof mockState.MockGraphics>;
     expect(gfx1.position.set).toHaveBeenLastCalledWith(100, 200);
     expect(gfx2.position.set).toHaveBeenLastCalledWith(300, 400);
   });
@@ -632,6 +634,108 @@ describe('PixiRenderer', () => {
 
     expect(mockTrailSystem.spawnTrail).not.toHaveBeenCalled();
   });
+
+  // ── Shake + flash animation integration via syncBlocks ─────────────────
+
+  it('syncBlocks applies shake offset for ReExecution blocks', async () => {
+    await renderer.init(container, 800, 600);
+    const block = makeTxBlock({
+      x: 100,
+      y: 200,
+      eventType: GameEventType.ReExecution,
+      color: EVENT_COLORS[GameEventType.ReExecution],
+      shakePhase: Math.PI / 2, // sin(π/2) = 1 → offset = +3px
+    });
+
+    renderer.addBlock(block);
+    // First syncBlocks calls updateBlockPosition on existing block
+    const blocks = new Set<TxBlock>([block]);
+    renderer.syncBlocks(blocks);
+
+    const gfx = renderer._getBlockGraphics(block) as unknown as InstanceType<typeof mockState.MockGraphics>;
+    const lastCall = gfx.position.set.mock.calls[gfx.position.set.mock.calls.length - 1];
+    expect(lastCall[0]).toBeCloseTo(103, 1); // 100 + sin(π/2)*3
+    expect(lastCall[1]).toBe(200);
+  });
+
+  it('syncBlocks fades flash overlay for ReExecutionResolved blocks', async () => {
+    await renderer.init(container, 800, 600);
+    const block = makeTxBlock({
+      x: 100,
+      y: 200,
+      eventType: GameEventType.ReExecutionResolved,
+      color: EVENT_COLORS[GameEventType.ReExecutionResolved],
+      flashElapsed: 0.1, // halfway through 200ms
+    });
+
+    renderer.addBlock(block);
+    const gfx = renderer._getBlockGraphics(block) as unknown as InstanceType<typeof mockState.MockGraphics>;
+    const flash = (gfx as any).__flashOverlay;
+    expect(flash).toBeDefined();
+
+    // syncBlocks calls updateBlockPosition which fades the flash
+    const blocks = new Set<TxBlock>([block]);
+    renderer.syncBlocks(blocks);
+
+    expect(flash.alpha).toBeCloseTo(0.5, 2);
+  });
+
+  // ── clearAllBlocks tests ──────────────────────────────────────────────
+
+  it('clearAllBlocks removes and destroys all tracked Graphics', async () => {
+    await renderer.init(container, 800, 600);
+    const b1 = makeTxBlock({ x: 10, y: 20 });
+    const b2 = makeTxBlock({ x: 30, y: 40 });
+
+    renderer.addBlock(b1);
+    renderer.addBlock(b2);
+    expect(renderer._gameLayer.children.length).toBe(2);
+
+    const gfx1 = renderer._getBlockGraphics(b1) as unknown as InstanceType<typeof mockState.MockGraphics>;
+    const gfx2 = renderer._getBlockGraphics(b2) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    renderer.clearAllBlocks();
+
+    // Graphics destroyed
+    expect(gfx1.destroy).toHaveBeenCalled();
+    expect(gfx2.destroy).toHaveBeenCalled();
+    // gameLayer emptied
+    expect(renderer._gameLayer.removeChild).toHaveBeenCalledWith(gfx1);
+    expect(renderer._gameLayer.removeChild).toHaveBeenCalledWith(gfx2);
+    // Map cleared — subsequent lookups return undefined
+    expect(renderer._getBlockGraphics(b1)).toBeUndefined();
+    expect(renderer._getBlockGraphics(b2)).toBeUndefined();
+  });
+
+  it('clearAllBlocks is safe when no blocks are tracked', async () => {
+    await renderer.init(container, 800, 600);
+    // Should not throw
+    renderer.clearAllBlocks();
+    expect(renderer._gameLayer.removeChild).not.toHaveBeenCalled();
+  });
+
+  it('syncBlocks creates fresh Graphics after clearAllBlocks', async () => {
+    await renderer.init(container, 800, 600);
+    const block = makeTxBlock({ x: 100, y: 50 });
+
+    // Add → verify tracked
+    renderer.addBlock(block);
+    const oldGfx = renderer._getBlockGraphics(block);
+    expect(oldGfx).toBeDefined();
+
+    // Clear all
+    renderer.clearAllBlocks();
+    expect(renderer._getBlockGraphics(block)).toBeUndefined();
+
+    // syncBlocks should lazily recreate a fresh Graphics
+    const blocks = new Set<TxBlock>([block]);
+    renderer.syncBlocks(blocks);
+
+    const newGfx = renderer._getBlockGraphics(block);
+    expect(newGfx).toBeDefined();
+    expect(newGfx).not.toBe(oldGfx); // fresh instance
+    expect(renderer._gameLayer.children.length).toBe(1);
+  });
 });
 
 describe('PixiBlockGraphics', () => {
@@ -686,5 +790,130 @@ describe('PixiBlockGraphics', () => {
     const sprite = gfx.children[0] as InstanceType<typeof mockState.MockSprite>;
     expect(sprite.anchor.set).toHaveBeenCalledWith(0.5, 0.5);
     expect(sprite.position.set).toHaveBeenCalledWith(60, 14);
+  });
+
+  // ── Re-execution shake animation tests ────────────────────────────────
+
+  it('updateBlockPosition applies shake offset for ReExecution blocks with non-zero shakePhase', async () => {
+    const { createBlockGraphics, updateBlockPosition } = await import('../../renderer/PixiBlockGraphics');
+    const block = makeTxBlock({
+      x: 100,
+      y: 200,
+      eventType: GameEventType.ReExecution,
+      color: EVENT_COLORS[GameEventType.ReExecution],
+      shakePhase: Math.PI / 2, // sin(π/2) = 1 → offset = +3px
+    });
+    const gfx = createBlockGraphics(block) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    updateBlockPosition(gfx as unknown as import('pixi.js').Graphics, block);
+
+    // x should be 100 + sin(π/2) * 3 = 103
+    const lastCall = gfx.position.set.mock.calls[gfx.position.set.mock.calls.length - 1];
+    expect(lastCall[0]).toBeCloseTo(103, 1);
+    expect(lastCall[1]).toBe(200);
+  });
+
+  it('updateBlockPosition does NOT apply shake offset for non-ReExecution blocks', async () => {
+    const { createBlockGraphics, updateBlockPosition } = await import('../../renderer/PixiBlockGraphics');
+    const block = makeTxBlock({
+      x: 100,
+      y: 200,
+      eventType: GameEventType.TxCommit,
+      shakePhase: Math.PI / 2, // should be ignored
+    });
+    const gfx = createBlockGraphics(block) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    updateBlockPosition(gfx as unknown as import('pixi.js').Graphics, block);
+
+    const lastCall = gfx.position.set.mock.calls[gfx.position.set.mock.calls.length - 1];
+    expect(lastCall[0]).toBe(100); // no offset
+    expect(lastCall[1]).toBe(200);
+  });
+
+  it('updateBlockPosition does NOT apply shake offset when shakePhase is 0', async () => {
+    const { createBlockGraphics, updateBlockPosition } = await import('../../renderer/PixiBlockGraphics');
+    const block = makeTxBlock({
+      x: 100,
+      y: 200,
+      eventType: GameEventType.ReExecution,
+      color: EVENT_COLORS[GameEventType.ReExecution],
+      shakePhase: 0,
+    });
+    const gfx = createBlockGraphics(block) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    updateBlockPosition(gfx as unknown as import('pixi.js').Graphics, block);
+
+    const lastCall = gfx.position.set.mock.calls[gfx.position.set.mock.calls.length - 1];
+    expect(lastCall[0]).toBe(100);
+    expect(lastCall[1]).toBe(200);
+  });
+
+  // ── Re-execution-resolved flash overlay tests ─────────────────────────
+
+  it('createBlockGraphics creates flash overlay child for ReExecutionResolved blocks', async () => {
+    const { createBlockGraphics } = await import('../../renderer/PixiBlockGraphics');
+    const block = makeTxBlock({
+      eventType: GameEventType.ReExecutionResolved,
+      color: EVENT_COLORS[GameEventType.ReExecutionResolved],
+      width: 120,
+      height: 28,
+    });
+
+    const gfx = createBlockGraphics(block) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    // Should have flash overlay child (icon sprite may or may not exist depending on iconTexture)
+    const flashChild = gfx.children.find((c: any) => c.roundRect && c.alpha === 1);
+    expect(flashChild).toBeDefined();
+    // __flashOverlay expando should be set
+    expect((gfx as any).__flashOverlay).toBe(flashChild);
+  });
+
+  it('createBlockGraphics does NOT create flash overlay for non-ReExecutionResolved blocks', async () => {
+    const { createBlockGraphics } = await import('../../renderer/PixiBlockGraphics');
+    const block = makeTxBlock({
+      eventType: GameEventType.ReExecution,
+      color: EVENT_COLORS[GameEventType.ReExecution],
+    });
+
+    const gfx = createBlockGraphics(block) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    expect((gfx as any).__flashOverlay).toBeUndefined();
+  });
+
+  it('updateBlockPosition fades flash overlay alpha based on flashElapsed', async () => {
+    const { createBlockGraphics, updateBlockPosition } = await import('../../renderer/PixiBlockGraphics');
+    const block = makeTxBlock({
+      x: 100,
+      y: 200,
+      eventType: GameEventType.ReExecutionResolved,
+      color: EVENT_COLORS[GameEventType.ReExecutionResolved],
+      flashElapsed: 0.1, // halfway through 200ms fade
+    });
+    const gfx = createBlockGraphics(block) as unknown as InstanceType<typeof mockState.MockGraphics>;
+    const flash = (gfx as any).__flashOverlay;
+    expect(flash).toBeDefined();
+    expect(flash.alpha).toBe(1); // starts at 1
+
+    updateBlockPosition(gfx as unknown as import('pixi.js').Graphics, block);
+
+    // alpha = max(0, 1 - 0.1/0.2) = 0.5
+    expect(flash.alpha).toBeCloseTo(0.5, 2);
+  });
+
+  it('updateBlockPosition sets flash overlay alpha=0 when flashElapsed >= 0.2', async () => {
+    const { createBlockGraphics, updateBlockPosition } = await import('../../renderer/PixiBlockGraphics');
+    const block = makeTxBlock({
+      x: 100,
+      y: 200,
+      eventType: GameEventType.ReExecutionResolved,
+      color: EVENT_COLORS[GameEventType.ReExecutionResolved],
+      flashElapsed: 0.25, // past 200ms
+    });
+    const gfx = createBlockGraphics(block) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    updateBlockPosition(gfx as unknown as import('pixi.js').Graphics, block);
+
+    const flash = (gfx as any).__flashOverlay;
+    expect(flash.alpha).toBe(0);
   });
 });

@@ -13,6 +13,8 @@ const mockUnmute = vi.fn();
 const mockPause = vi.fn().mockResolvedValue(undefined);
 const mockResume = vi.fn().mockResolvedValue(undefined);
 const mockDispose = vi.fn();
+const mockStartBGM = vi.fn();
+const mockStopBGM = vi.fn();
 let mockReady = false;
 
 vi.mock('../../audio/AudioEngine', () => ({
@@ -24,6 +26,8 @@ vi.mock('../../audio/AudioEngine', () => ({
     pause: mockPause,
     resume: mockResume,
     dispose: mockDispose,
+    startBGM: mockStartBGM,
+    stopBGM: mockStopBGM,
     get ready() { return mockReady; },
   })),
 }));
@@ -126,6 +130,11 @@ vi.mock('../../renderer/PixiRenderer', () => ({
     resize: mockPixiResize,
     destroy: mockPixiDestroy,
     getCanvas: mockPixiGetCanvas,
+    clearAllBlocks: vi.fn(),
+    emitHitBurst: vi.fn(),
+    updateEffects: vi.fn(),
+    enableGlow: false,
+    iconTextures: new Map(),
   })),
 }));
 
@@ -361,6 +370,18 @@ describe('GameView — Audio + AdaptivePerformance wiring', () => {
     render(<GameView />);
     // Socket mock fires onStateChange('connected') on connect()
     expect(screen.getByTestId('btn-simulate')).toBeDefined();
+  });
+
+  it('calls startBGM after init on simulate click', async () => {
+    render(<GameView />);
+
+    const simBtn = screen.getByTestId('btn-simulate');
+    await act(async () => {
+      fireEvent.click(simBtn);
+    });
+
+    expect(mockInit).toHaveBeenCalledTimes(1);
+    expect(mockStartBGM).toHaveBeenCalledTimes(1);
   });
 
   it('onEvent without audio init is a graceful no-op', () => {

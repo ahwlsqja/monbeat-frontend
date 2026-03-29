@@ -1,21 +1,15 @@
 /**
- * AudioEngine — Tone.js audio playback for monbeat game events.
+ * AudioEngine — Howler.js audio playback for monbeat game events.
  *
- * Sound design: cyberpunk/synthwave aesthetic
- * - PolySynth wrappers (polyphonic) with FM voice for rich sound
- * - TxCommit: percussive metallic click per lane
- * - Conflict: dissonant glitch + noise burst
- * - ReExecution: clean FM with delay
- * - BlockComplete: wide pad chord with long reverb tail
- * - All triggers use Tone.now() + offset to prevent "Start time" errors
- *
- * - Dynamic import('tone') to keep initial bundle < 200KB
+ * Sound design: pre-built CC0 audio files synthesized via ffmpeg.
+ * - BGM: looping ambient track (/audio/bgm-loop.mp3)
+ * - SFX: per-event-type one-shot sounds (/audio/{name}.mp3)
  * - Token-bucket rate limiter (~40 sounds/sec)
  * - No React dependency — wired in via GameView
  */
 
+import { Howl } from 'howler';
 import { GameEvent, GameEventType } from '@/net/types';
-import { midiToNote } from './midiToNote';
 
 // ---------------------------------------------------------------------------
 // Token-bucket rate limiter
@@ -56,189 +50,100 @@ class TokenBucket {
 }
 
 // ---------------------------------------------------------------------------
+// SFX path mapping
+// ---------------------------------------------------------------------------
+
+const SFX_PATHS: Record<GameEventType, string> = {
+  [GameEventType.TxCommit]: '/audio/tx-commit.mp3',
+  [GameEventType.Conflict]: '/audio/conflict.mp3',
+  [GameEventType.ReExecution]: '/audio/re-execution.mp3',
+  [GameEventType.ReExecutionResolved]: '/audio/re-execution-resolved.mp3',
+  [GameEventType.BlockComplete]: '/audio/block-complete.mp3',
+};
+
+const BGM_PATH = '/audio/bgm-loop.mp3';
+const BGM_VOLUME = 0.3;
+const SFX_VOLUME = 0.6;
+
+// ---------------------------------------------------------------------------
 // AudioEngine
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ToneModule = any;
-
-const MASTER_VOLUME = -14; // dB
-
 export class AudioEngine {
-  private tone: ToneModule | null = null;
-
-  // All synths are PolySynth (polyphonic) — avoids "Start time" monophonic errors
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private commitSynths: any[] = []; // 4 lanes
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private conflictSynth: any | null = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private noiseSynth: any | null = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private reexecSynth: any | null = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private completeSynth: any | null = null;
-
-  // Effects
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private reverb: any | null = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private delay: any | null = null;
+  private sfx: Map<GameEventType, Howl> = new Map();
+  private bgm: Howl | null = null;
 
   private _ready = false;
   private _muted = false;
   private limiter = new TokenBucket(40, 40);
   private blockCompletePlayed = false;
 
-  // Monotonic time counter to prevent same-time triggers
-  private lastTriggerTime = 0;
-
   get ready(): boolean { return this._ready; }
   get muted(): boolean { return this._muted; }
-
-  private nextTime(): number {
-    if (!this.tone) return 0;
-    const now = this.tone.now();
-    // Ensure each trigger is at least 1ms after the previous
-    this.lastTriggerTime = Math.max(now, this.lastTriggerTime + 0.001);
-    return this.lastTriggerTime;
-  }
 
   async init(): Promise<void> {
     if (this._ready) return;
 
-    const Tone = await import('tone');
-    this.tone = Tone;
-    await Tone.start();
+    // Create BGM Howl (looping)
+    this.bgm = new Howl({
+      src: [BGM_PATH],
+      loop: true,
+      volume: BGM_VOLUME,
+      preload: true,
+    });
 
-    // --- Effects ---
-    this.reverb = new Tone.Reverb({ decay: 2.0, wet: 0.25 }).toDestination();
-    await this.reverb.generate();
-
-    this.delay = new Tone.FeedbackDelay({
-      delayTime: '16n',
-      feedback: 0.2,
-      wet: 0.15,
-    }).connect(this.reverb);
-
-    // --- TxCommit: percussive metallic PolySynth per lane ---
-    // Different oscillator types give each lane a distinct timbre
-    const oscTypes: Array<'triangle' | 'sine' | 'square' | 'sawtooth'> = [
-      'triangle', 'sine', 'square', 'sawtooth',
-    ];
-    this.commitSynths = oscTypes.map(
-      (type) =>
-        new Tone.PolySynth({
-          maxPolyphony: 4,
-          voice: Tone.Synth,
-          options: {
-            oscillator: { type },
-            envelope: { attack: 0.002, decay: 0.08, sustain: 0, release: 0.05 },
-            volume: MASTER_VOLUME,
-          },
-        }).connect(this.reverb),
-    );
-
-    // --- Conflict: harsh metallic buzz ---
-    this.conflictSynth = new Tone.PolySynth({
-      maxPolyphony: 4,
-      voice: Tone.Synth,
-      options: {
-        oscillator: { type: 'sawtooth' },
-        envelope: { attack: 0.001, decay: 0.12, sustain: 0.05, release: 0.08 },
-        volume: MASTER_VOLUME - 4,
-      },
-    }).connect(this.reverb);
-
-    // --- Noise burst for conflict texture ---
-    this.noiseSynth = new Tone.NoiseSynth({
-      noise: { type: 'pink' },
-      volume: MASTER_VOLUME - 16,
-      envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.02 },
-    }).connect(this.reverb);
-
-    // --- ReExecution: clean tone with delay tail ---
-    this.reexecSynth = new Tone.PolySynth({
-      maxPolyphony: 4,
-      voice: Tone.Synth,
-      options: {
-        oscillator: { type: 'sine' },
-        envelope: { attack: 0.01, decay: 0.15, sustain: 0.1, release: 0.2 },
-        volume: MASTER_VOLUME - 2,
-      },
-    }).connect(this.delay);
-
-    // --- BlockComplete: wide chord with long reverb ---
-    this.completeSynth = new Tone.PolySynth({
-      maxPolyphony: 6,
-      voice: Tone.Synth,
-      options: {
-        oscillator: { type: 'sine' },
-        envelope: { attack: 0.3, decay: 0.8, sustain: 0.4, release: 1.5 },
-        volume: MASTER_VOLUME - 6,
-      },
-    }).connect(this.reverb);
+    // Create SFX Howls (one per event type)
+    for (const [typeStr, path] of Object.entries(SFX_PATHS)) {
+      const eventType = Number(typeStr) as GameEventType;
+      this.sfx.set(
+        eventType,
+        new Howl({
+          src: [path],
+          volume: SFX_VOLUME,
+          preload: true,
+        }),
+      );
+    }
 
     this._ready = true;
     this.blockCompletePlayed = false;
-    this.lastTriggerTime = 0;
   }
 
   // -----------------------------------------------------------------------
-  // Playback
+  // BGM control
+  // -----------------------------------------------------------------------
+
+  startBGM(): void {
+    if (!this._ready || this._muted || !this.bgm) return;
+    if (!this.bgm.playing()) {
+      this.bgm.play();
+    }
+  }
+
+  stopBGM(): void {
+    if (!this.bgm) return;
+    this.bgm.stop();
+  }
+
+  // -----------------------------------------------------------------------
+  // SFX playback
   // -----------------------------------------------------------------------
 
   play(event: GameEvent): void {
     if (!this._ready || this._muted || !this.limiter.canConsume()) return;
 
-    const note = midiToNote(event.note);
-    const lane = Math.max(0, Math.min(3, event.lane));
-    const time = this.nextTime();
+    if (event.type === GameEventType.BlockComplete) {
+      if (this.blockCompletePlayed) return;
+      this.blockCompletePlayed = true;
+    }
 
-    switch (event.type) {
-      case GameEventType.TxCommit:
-        try {
-          this.commitSynths[lane]?.triggerAttackRelease(note, '32n', time);
-        } catch {
-          // safe to drop
-        }
-        break;
+    const howl = this.sfx.get(event.type);
+    if (!howl) return;
 
-      case GameEventType.Conflict: {
-        const dissonant = midiToNote(Math.min(127, event.note + 1));
-        try {
-          this.conflictSynth?.triggerAttackRelease(dissonant, '16n', time);
-        } catch {
-          // safe to drop
-        }
-        try {
-          this.noiseSynth?.triggerAttackRelease('32n', time);
-        } catch {
-          // safe to drop
-        }
-        break;
-      }
-
-      case GameEventType.ReExecution:
-      case GameEventType.ReExecutionResolved:
-        try {
-          this.reexecSynth?.triggerAttackRelease(note, '16n', time);
-        } catch {
-          // safe to drop
-        }
-        break;
-
-      case GameEventType.BlockComplete:
-        if (this.blockCompletePlayed) break;
-        this.blockCompletePlayed = true;
-        try {
-          this.completeSynth?.triggerAttackRelease(
-            ['C4', 'E4', 'G4', 'B4'], '2n', time,
-          );
-        } catch {
-          // safe to drop
-        }
-        break;
+    try {
+      howl.play();
+    } catch {
+      // safe to drop — audio glitch shouldn't crash game
     }
   }
 
@@ -246,51 +151,54 @@ export class AudioEngine {
   // Mute / Pause / Dispose
   // -----------------------------------------------------------------------
 
-  mute(): void { this._muted = true; }
-  unmute(): void { this._muted = false; }
+  mute(): void {
+    this._muted = true;
+    this.bgm?.mute(true);
+    for (const howl of this.sfx.values()) {
+      howl.mute(true);
+    }
+  }
+
+  unmute(): void {
+    this._muted = false;
+    this.bgm?.mute(false);
+    for (const howl of this.sfx.values()) {
+      howl.mute(false);
+    }
+  }
 
   async pause(): Promise<void> {
-    if (!this.tone) return;
     try {
-      const ctx = this.tone.getContext();
-      await ctx.rawContext?.suspend?.();
+      this.bgm?.mute(true);
+      for (const howl of this.sfx.values()) {
+        howl.mute(true);
+      }
     } catch { /* safe */ }
   }
 
   async resume(): Promise<void> {
-    if (!this.tone) return;
     try {
-      const ctx = this.tone.getContext();
-      await ctx.rawContext?.resume?.();
+      if (!this._muted) {
+        this.bgm?.mute(false);
+        for (const howl of this.sfx.values()) {
+          howl.mute(false);
+        }
+      }
       this.limiter.reset();
     } catch { /* safe */ }
   }
 
   dispose(): void {
-    const disposables = [
-      ...this.commitSynths,
-      this.conflictSynth,
-      this.noiseSynth,
-      this.reexecSynth,
-      this.completeSynth,
-      this.reverb,
-      this.delay,
-    ];
-    for (const node of disposables) {
-      try { node?.dispose(); } catch { /* already disposed */ }
-    }
+    try { this.bgm?.unload(); } catch { /* already disposed */ }
+    this.bgm = null;
 
-    this.commitSynths = [];
-    this.conflictSynth = null;
-    this.noiseSynth = null;
-    this.reexecSynth = null;
-    this.completeSynth = null;
-    this.reverb = null;
-    this.delay = null;
-    this.tone = null;
+    for (const howl of this.sfx.values()) {
+      try { howl.unload(); } catch { /* already disposed */ }
+    }
+    this.sfx.clear();
+
     this._ready = false;
     this._muted = false;
     this.blockCompletePlayed = false;
-    this.lastTriggerTime = 0;
   }
 }

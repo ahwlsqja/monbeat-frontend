@@ -2,64 +2,29 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GameEvent, GameEventType } from '@/net/types';
 
 // ---------------------------------------------------------------------------
-// Mock Tone.js
+// Mock howler
 // ---------------------------------------------------------------------------
 
-const mockTriggerAttackRelease = vi.fn();
-const mockDispose = vi.fn();
-const mockNoiseTriggerAttackRelease = vi.fn();
-const mockNoiseDispose = vi.fn();
-const mockStart = vi.fn().mockResolvedValue(undefined);
-const mockNow = vi.fn().mockReturnValue(0.1);
+const mockPlay = vi.fn().mockReturnValue(1);
+const mockStop = vi.fn();
+const mockMute = vi.fn();
+const mockVolume = vi.fn();
+const mockUnload = vi.fn();
+const mockPlaying = vi.fn().mockReturnValue(false);
 
-const mockSuspend = vi.fn().mockResolvedValue(undefined);
-const mockResume = vi.fn().mockResolvedValue(undefined);
-const mockGetContext = vi.fn().mockReturnValue({
-  rawContext: { suspend: mockSuspend, resume: mockResume },
-});
-
-const mockConnect = vi.fn().mockReturnThis();
-
-const MockPolySynth = vi.fn().mockImplementation(() => ({
-  triggerAttackRelease: mockTriggerAttackRelease,
-  dispose: mockDispose,
-  connect: mockConnect,
-  toDestination: vi.fn().mockReturnThis(),
-}));
-
-const MockNoiseSynth = vi.fn().mockImplementation(() => ({
-  triggerAttackRelease: mockNoiseTriggerAttackRelease,
-  dispose: mockNoiseDispose,
-  connect: mockConnect,
-  toDestination: vi.fn().mockReturnThis(),
-}));
-
-const MockReverb = vi.fn().mockImplementation(() => ({
-  generate: vi.fn().mockResolvedValue(undefined),
-  dispose: mockDispose,
-  connect: mockConnect,
-  toDestination: vi.fn().mockReturnThis(),
-}));
-
-const MockFeedbackDelay = vi.fn().mockImplementation(() => ({
-  dispose: mockDispose,
-  connect: mockConnect,
-}));
-
-const MockSynth = vi.fn();
-
-vi.mock('tone', () => ({
-  start: mockStart,
-  now: mockNow,
-  getContext: mockGetContext,
-  PolySynth: MockPolySynth,
-  NoiseSynth: MockNoiseSynth,
-  Synth: MockSynth,
-  Reverb: MockReverb,
-  FeedbackDelay: MockFeedbackDelay,
+vi.mock('howler', () => ({
+  Howl: vi.fn().mockImplementation(() => ({
+    play: mockPlay,
+    stop: mockStop,
+    mute: mockMute,
+    volume: mockVolume,
+    unload: mockUnload,
+    playing: mockPlaying,
+  })),
 }));
 
 import { AudioEngine } from '@/audio/AudioEngine';
+import { Howl } from 'howler';
 
 function makeEvent(overrides: Partial<GameEvent> = {}): GameEvent {
   return {
@@ -73,79 +38,146 @@ function makeEvent(overrides: Partial<GameEvent> = {}): GameEvent {
   };
 }
 
-describe('AudioEngine', () => {
+describe('AudioEngine (Howler.js)', () => {
   let engine: AudioEngine;
 
   beforeEach(() => {
-    mockTriggerAttackRelease.mockClear();
-    mockDispose.mockClear();
-    mockNoiseTriggerAttackRelease.mockClear();
-    mockNoiseDispose.mockClear();
-    mockStart.mockClear();
-    mockNow.mockClear();
-    mockConnect.mockClear();
-    MockPolySynth.mockClear();
-    MockNoiseSynth.mockClear();
-    MockReverb.mockClear();
-    MockFeedbackDelay.mockClear();
+    vi.clearAllMocks();
+    mockPlaying.mockReturnValue(false);
     engine = new AudioEngine();
   });
 
-  afterEach(() => { engine.dispose(); });
+  afterEach(() => {
+    engine.dispose();
+  });
+
+  // ----- init() -----
 
   describe('init()', () => {
-    it('creates synths + effects', async () => {
+    it('creates 1 BGM + 5 SFX Howl instances', async () => {
       await engine.init();
-      expect(mockStart).toHaveBeenCalledOnce();
-      // 4 commit + 1 conflict + 1 reexec + 1 complete = 7 PolySynths
-      expect(MockPolySynth).toHaveBeenCalledTimes(7);
-      expect(MockNoiseSynth).toHaveBeenCalledOnce();
-      expect(MockReverb).toHaveBeenCalledOnce();
-      expect(MockFeedbackDelay).toHaveBeenCalledOnce();
+      // 1 BGM + 5 SFX = 6 Howl instances
+      expect(Howl).toHaveBeenCalledTimes(6);
       expect(engine.ready).toBe(true);
+    });
+
+    it('creates BGM with loop:true', async () => {
+      await engine.init();
+      const bgmCall = vi.mocked(Howl).mock.calls[0][0];
+      expect(bgmCall).toMatchObject({
+        src: ['/audio/bgm-loop.mp3'],
+        loop: true,
+      });
+    });
+
+    it('creates SFX for all 5 event types', async () => {
+      await engine.init();
+      const srcs = vi.mocked(Howl).mock.calls.map(c => c[0].src[0]);
+      expect(srcs).toContain('/audio/tx-commit.mp3');
+      expect(srcs).toContain('/audio/conflict.mp3');
+      expect(srcs).toContain('/audio/re-execution.mp3');
+      expect(srcs).toContain('/audio/re-execution-resolved.mp3');
+      expect(srcs).toContain('/audio/block-complete.mp3');
     });
 
     it('is idempotent', async () => {
       await engine.init();
       await engine.init();
-      expect(mockStart).toHaveBeenCalledOnce();
+      // Only 6 Howl instances — not 12
+      expect(Howl).toHaveBeenCalledTimes(6);
     });
   });
 
-  describe('play() — TxCommit', () => {
-    it('triggers lane synth with explicit time', async () => {
+  // ----- BGM -----
+
+  describe('BGM', () => {
+    it('startBGM plays the BGM howl', async () => {
       await engine.init();
-      engine.play(makeEvent({ type: GameEventType.TxCommit, lane: 2, note: 60 }));
-      expect(mockTriggerAttackRelease).toHaveBeenCalledWith('C4', '32n', expect.any(Number));
+      engine.startBGM();
+      expect(mockPlay).toHaveBeenCalledTimes(1);
+    });
+
+    it('startBGM does nothing if already playing', async () => {
+      await engine.init();
+      mockPlaying.mockReturnValue(true);
+      engine.startBGM();
+      expect(mockPlay).not.toHaveBeenCalled();
+    });
+
+    it('startBGM does nothing if muted', async () => {
+      await engine.init();
+      engine.mute();
+      vi.clearAllMocks();
+      engine.startBGM();
+      expect(mockPlay).not.toHaveBeenCalled();
+    });
+
+    it('stopBGM stops the BGM howl', async () => {
+      await engine.init();
+      engine.stopBGM();
+      expect(mockStop).toHaveBeenCalledTimes(1);
+    });
+
+    it('stopBGM is safe before init', () => {
+      engine.stopBGM();
+      expect(mockStop).not.toHaveBeenCalled();
+    });
+  });
+
+  // ----- play() per event type -----
+
+  describe('play() — TxCommit', () => {
+    it('plays tx-commit SFX', async () => {
+      await engine.init();
+      engine.play(makeEvent({ type: GameEventType.TxCommit }));
+      expect(mockPlay).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('play() — Conflict', () => {
-    it('plays dissonant note + noise burst', async () => {
+    it('plays conflict SFX', async () => {
       await engine.init();
-      engine.play(makeEvent({ type: GameEventType.Conflict, note: 60 }));
-      expect(mockTriggerAttackRelease).toHaveBeenCalledWith('C#4', '16n', expect.any(Number));
-      expect(mockNoiseTriggerAttackRelease).toHaveBeenCalledWith('32n', expect.any(Number));
-    });
-  });
-
-  describe('play() — BlockComplete', () => {
-    it('plays C-E-G-B chord', async () => {
-      await engine.init();
-      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
-      expect(mockTriggerAttackRelease).toHaveBeenCalledWith(
-        ['C4', 'E4', 'G4', 'B4'], '2n', expect.any(Number),
-      );
+      engine.play(makeEvent({ type: GameEventType.Conflict }));
+      expect(mockPlay).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('play() — ReExecution', () => {
-    it('plays on reexec synth', async () => {
+    it('plays re-execution SFX', async () => {
       await engine.init();
-      engine.play(makeEvent({ type: GameEventType.ReExecution, note: 69 }));
-      expect(mockTriggerAttackRelease).toHaveBeenCalledWith('A4', '16n', expect.any(Number));
+      engine.play(makeEvent({ type: GameEventType.ReExecution }));
+      expect(mockPlay).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('play() — ReExecutionResolved', () => {
+    it('plays re-execution-resolved SFX', async () => {
+      await engine.init();
+      engine.play(makeEvent({ type: GameEventType.ReExecutionResolved }));
+      expect(mockPlay).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('play() — BlockComplete', () => {
+    it('plays block-complete SFX', async () => {
+      await engine.init();
+      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
+      expect(mockPlay).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ----- BlockComplete dedup -----
+
+  describe('BlockComplete dedup', () => {
+    it('plays only once', async () => {
+      await engine.init();
+      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
+      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
+      expect(mockPlay).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ----- rate limiter -----
 
   describe('rate limiter', () => {
     it('drops after 40 rapid plays', async () => {
@@ -153,61 +185,122 @@ describe('AudioEngine', () => {
       const fixedNow = performance.now();
       const spy = vi.spyOn(performance, 'now').mockReturnValue(fixedNow);
       for (let i = 0; i < 45; i++) engine.play(makeEvent());
-      expect(mockTriggerAttackRelease.mock.calls.length).toBeGreaterThanOrEqual(40);
-      expect(mockTriggerAttackRelease.mock.calls.length).toBeLessThanOrEqual(41);
+      expect(mockPlay.mock.calls.length).toBeGreaterThanOrEqual(40);
+      expect(mockPlay.mock.calls.length).toBeLessThanOrEqual(41);
       spy.mockRestore();
     });
   });
 
+  // ----- mute / unmute -----
+
   describe('mute / unmute', () => {
-    it('mute prevents sound', async () => {
+    it('mute prevents SFX play', async () => {
       await engine.init();
       engine.mute();
+      vi.clearAllMocks();
       engine.play(makeEvent());
-      expect(mockTriggerAttackRelease).not.toHaveBeenCalled();
+      expect(mockPlay).not.toHaveBeenCalled();
     });
 
-    it('unmute re-enables', async () => {
+    it('mute sets mute(true) on BGM and all SFX', async () => {
+      await engine.init();
+      engine.mute();
+      // 1 BGM + 5 SFX = 6 mute(true) calls
+      expect(mockMute).toHaveBeenCalledWith(true);
+      expect(mockMute.mock.calls.filter(c => c[0] === true)).toHaveLength(6);
+    });
+
+    it('unmute re-enables sound', async () => {
       await engine.init();
       engine.mute();
       engine.unmute();
+      vi.clearAllMocks();
       engine.play(makeEvent());
-      expect(mockTriggerAttackRelease).toHaveBeenCalled();
+      expect(mockPlay).toHaveBeenCalledTimes(1);
+    });
+
+    it('unmute sets mute(false) on BGM and all SFX', async () => {
+      await engine.init();
+      engine.unmute();
+      expect(mockMute).toHaveBeenCalledWith(false);
+      expect(mockMute.mock.calls.filter(c => c[0] === false)).toHaveLength(6);
     });
   });
+
+  // ----- pause / resume -----
+
+  describe('pause / resume', () => {
+    it('pause mutes all howls', async () => {
+      await engine.init();
+      await engine.pause();
+      // 1 BGM + 5 SFX = 6 mute(true) calls
+      expect(mockMute).toHaveBeenCalledWith(true);
+    });
+
+    it('resume unmutes when not muted', async () => {
+      await engine.init();
+      await engine.resume();
+      expect(mockMute).toHaveBeenCalledWith(false);
+    });
+
+    it('resume does not unmute when muted', async () => {
+      await engine.init();
+      engine.mute();
+      vi.clearAllMocks();
+      await engine.resume();
+      // Should NOT call mute(false) because _muted is true
+      const falseCalls = mockMute.mock.calls.filter(c => c[0] === false);
+      expect(falseCalls).toHaveLength(0);
+    });
+  });
+
+  // ----- dispose -----
 
   describe('dispose()', () => {
-    it('disposes all nodes', async () => {
+    it('unloads all howls', async () => {
       await engine.init();
       engine.dispose();
-      // 7 PolySynths + 1 Reverb + 1 Delay = 9
-      expect(mockDispose.mock.calls.length).toBeGreaterThanOrEqual(9);
-      expect(mockNoiseDispose).toHaveBeenCalledOnce();
+      // 1 BGM + 5 SFX = 6 unload calls
+      expect(mockUnload).toHaveBeenCalledTimes(6);
       expect(engine.ready).toBe(false);
+    });
+
+    it('is safe to call before init', () => {
+      expect(() => engine.dispose()).not.toThrow();
+    });
+
+    it('is safe to call twice', async () => {
+      await engine.init();
+      engine.dispose();
+      expect(() => engine.dispose()).not.toThrow();
     });
   });
 
+  // ----- error resilience -----
+
   describe('error resilience', () => {
-    it('does not crash on throw', async () => {
+    it('does not crash when play() throws', async () => {
       await engine.init();
-      mockTriggerAttackRelease.mockImplementationOnce(() => { throw new Error('boom'); });
+      mockPlay.mockImplementationOnce(() => { throw new Error('boom'); });
       expect(() => engine.play(makeEvent())).not.toThrow();
     });
   });
 
-  describe('BlockComplete dedup', () => {
-    it('plays only once', async () => {
-      await engine.init();
-      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
-      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
-      expect(mockTriggerAttackRelease).toHaveBeenCalledTimes(1);
-    });
-  });
+  // ----- play before init -----
 
   describe('play before init', () => {
     it('is a no-op', () => {
       engine.play(makeEvent());
-      expect(mockTriggerAttackRelease).not.toHaveBeenCalled();
+      expect(mockPlay).not.toHaveBeenCalled();
+    });
+  });
+
+  // ----- startBGM before init -----
+
+  describe('startBGM before init', () => {
+    it('is a no-op', () => {
+      engine.startBGM();
+      expect(mockPlay).not.toHaveBeenCalled();
     });
   });
 });

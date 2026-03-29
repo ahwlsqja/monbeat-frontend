@@ -29,12 +29,11 @@ export class TxBlock implements Poolable {
   /** Event type discriminant (1-5). Defaults to TxCommit. */
   eventType: GameEventTypeT = GameEventType.TxCommit;
 
-  /**
-   * Optional PixiJS Graphics reference. Typed as `any` to keep the entity
-   * layer renderer-agnostic — PixiRenderer manages the actual Graphics lifecycle.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  graphics: any | null = null;
+  // ── Animation state ──
+  /** Accumulated shake phase (radians) for ReExecution blocks. 15 Hz oscillation. */
+  shakePhase = 0;
+  /** Elapsed time (seconds) since spawn for ReExecutionResolved flash overlay. */
+  flashElapsed = 0;
 
   /**
    * Initialize the block for a specific lane and canvas dimensions.
@@ -57,10 +56,20 @@ export class TxBlock implements Poolable {
 
   /**
    * Advance position by dt seconds. Only moves while falling.
+   * Also accumulates animation state for ReExecution (shake) and
+   * ReExecutionResolved (flash overlay fade).
    */
   update(dt: number): void {
     if (this.state === 'falling') {
       this.y += this.speed * dt;
+    }
+    // Accumulate shake phase for ReExecution — 15 Hz oscillation
+    if (this.eventType === GameEventType.ReExecution) {
+      this.shakePhase += dt * 15 * 2 * Math.PI; // 15 Hz in radians
+    }
+    // Accumulate flash elapsed for ReExecutionResolved — drives fade overlay
+    if (this.eventType === GameEventType.ReExecutionResolved) {
+      this.flashElapsed += dt;
     }
   }
 
@@ -75,7 +84,6 @@ export class TxBlock implements Poolable {
    * Reset all properties to defaults for pool reuse.
    */
   reset(): void {
-    this.clearGraphics();
     this.x = 0;
     this.y = 0;
     this.width = 0;
@@ -86,17 +94,7 @@ export class TxBlock implements Poolable {
     this.color = DEFAULT_COLOR;
     this.speed = 200;
     this.commitZoneY = 0;
-  }
-
-  /**
-   * Detach and destroy the associated PixiJS Graphics, if any.
-   * Called by reset() and on explicit block removal.
-   */
-  clearGraphics(): void {
-    if (this.graphics) {
-      this.graphics.removeFromParent?.();
-      this.graphics.destroy?.();
-      this.graphics = null;
-    }
+    this.shakePhase = 0;
+    this.flashElapsed = 0;
   }
 }

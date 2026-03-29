@@ -38,9 +38,6 @@ const ICON_SIZE = 24;
 const ICON_FONT = 'bold 11px monospace';
 const ICON_FILL = '#ffffff';
 
-// ── WeakMap for TxBlock → Graphics association ─────────────────────────────
-const blockGraphicsMap = new WeakMap<TxBlock, Graphics>();
-
 /** Options for effect initialization passed to init(). */
 export interface EffectsConfig {
   maxParticles?: number;
@@ -52,6 +49,14 @@ export class PixiRenderer {
   private bgLayer!: Container;
   private gameLayer!: Container;
   private initialized = false;
+
+  /**
+   * Instance-scoped Map tracking TxBlock → Graphics associations.
+   * Previously a module-scoped WeakMap, which caused orphan Graphics leaks
+   * because TxBlock.clearGraphics() never had a reference to clean them.
+   * Now instance-scoped so clearAllBlocks() can iterate and destroy all.
+   */
+  private blockGraphicsMap = new Map<TxBlock, Graphics>();
 
   /** Whether GPU GlowFilter is applied to non-TxCommit blocks. */
   enableGlow = false;
@@ -247,7 +252,7 @@ export class PixiRenderer {
       enableGlow: this.enableGlow,
       iconTexture,
     });
-    blockGraphicsMap.set(block, gfx);
+    this.blockGraphicsMap.set(block, gfx);
     this.gameLayer.addChild(gfx);
   }
 
@@ -255,19 +260,30 @@ export class PixiRenderer {
    * Remove a block's Graphics from gameLayer and clean it up.
    */
   removeBlock(block: TxBlock): void {
-    const gfx = blockGraphicsMap.get(block);
+    const gfx = this.blockGraphicsMap.get(block);
     if (!gfx) return;
     this.gameLayer.removeChild(gfx);
     gfx.destroy();
-    blockGraphicsMap.delete(block);
+    this.blockGraphicsMap.delete(block);
+  }
+
+  /**
+   * Remove and destroy ALL tracked Graphics from the gameLayer.
+   * Called before ObjectPool.releaseAll() during demo→ws transition
+   * to prevent orphan Graphics from lingering on screen.
+   */
+  clearAllBlocks(): void {
+    for (const [, gfx] of this.blockGraphicsMap) {
+      this.gameLayer.removeChild(gfx);
+      gfx.destroy();
+    }
+    this.blockGraphicsMap.clear();
   }
 
   /**
    * Synchronise the gameLayer with the active block set:
    * - Blocks in the set without Graphics are created (lazy init).
    * - Blocks already tracked have their position updated.
-   * - Stale Graphics (block released / no longer in set) are cleaned up
-   *   automatically by TxBlock.clearGraphics() → removeFromParent chain.
    *
    * Also spawns trail particles at 30Hz (every 2nd frame) for falling blocks.
    */
@@ -277,7 +293,7 @@ export class PixiRenderer {
     const spawnTrails = this.trailFrameCounter % 2 === 0;
 
     for (const block of blocks) {
-      let gfx = blockGraphicsMap.get(block);
+      let gfx = this.blockGraphicsMap.get(block);
       if (!gfx) {
         // Lazy creation — first frame after spawn
         const iconTexture = this.iconTextures.get(block.eventType);
@@ -285,7 +301,7 @@ export class PixiRenderer {
           enableGlow: this.enableGlow,
           iconTexture,
         });
-        blockGraphicsMap.set(block, gfx);
+        this.blockGraphicsMap.set(block, gfx);
         this.gameLayer.addChild(gfx);
       } else {
         updateBlockPosition(gfx, block);
@@ -373,7 +389,7 @@ export class PixiRenderer {
   get _trailSystem(): TrailSystem | null { return this.trailSystem; }
 
   /** @internal — lookup Graphics for a block (testing) */
-  static _getBlockGraphics(block: TxBlock): Graphics | undefined {
-    return blockGraphicsMap.get(block);
+  _getBlockGraphics(block: TxBlock): Graphics | undefined {
+    return this.blockGraphicsMap.get(block);
   }
 }

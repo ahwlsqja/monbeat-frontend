@@ -100,7 +100,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       try {
         audioEngineRef.current?.play(event);
       } catch {
-        // Tone.js timing error — safe to drop
+        // audio error — safe to drop
       }
     };
 
@@ -108,6 +108,11 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     gameState.onBlockHitVisual = (x, y, width, height, color) => {
       const tint = parseInt(color.slice(1), 16);
       pixiRenderer.emitHitBurst(x, y, width, height, tint, 12);
+    };
+
+    // Wire renderer cleanup before pool releaseAll — prevents orphan Graphics
+    gameState.onBeforeClearAll = () => {
+      pixiRenderer.clearAllBlocks();
     };
 
     // --- Game loop callbacks ---
@@ -123,6 +128,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       if (pendingCompletionRef.current && gameState.isFullyDrained) {
         const stats = pendingCompletionRef.current;
         pendingCompletionRef.current = null;
+        audioEngineRef.current?.stopBGM();
         onCompleteRef.current?.(stats);
       }
     };
@@ -223,9 +229,11 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
         audioEngineRef.current = new AudioEngine();
       }
       await audioEngineRef.current.init();
+      audioEngineRef.current.startBGM();
     }
 
     // Clear visual state for new simulation
+    gs.onBeforeClearAll?.();
     gs.txPool.releaseAll();
     gs.stats.txCount = 0;
     gs.stats.conflicts = 0;

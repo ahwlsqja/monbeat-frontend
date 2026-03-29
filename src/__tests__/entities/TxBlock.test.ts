@@ -130,8 +130,8 @@ describe('TxBlock', () => {
   describe('reset()', () => {
     it('should restore all properties to defaults', () => {
       const block = new TxBlock();
-      block.init(2, CANVAS_WIDTH, CANVAS_HEIGHT);
-      block.update(1.0); // move it
+      block.init(2, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecution);
+      block.update(1.0); // move it + accumulate shakePhase
       block.state = 'hit';
 
       block.reset();
@@ -145,6 +145,8 @@ describe('TxBlock', () => {
       expect(block.color).toBe('#4ade80'); // EVENT_COLORS[TxCommit]
       expect(block.speed).toBe(200);
       expect(block.commitZoneY).toBe(0);
+      expect(block.shakePhase).toBe(0);
+      expect(block.flashElapsed).toBe(0);
     });
 
     it('should allow re-init after reset', () => {
@@ -212,54 +214,151 @@ describe('TxBlock', () => {
     });
   });
 
-  describe('clearGraphics()', () => {
-    it('should call removeFromParent and destroy on attached graphics', () => {
+  describe('reset() clears state', () => {
+    it('should reset all fields after state changes', () => {
       const block = new TxBlock();
-      const mockGfx = { removeFromParent: vi.fn(), destroy: vi.fn() };
-      block.graphics = mockGfx;
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      block.state = 'hit';
+      block.speed = 999;
 
-      block.clearGraphics();
+      block.reset();
 
-      expect(mockGfx.removeFromParent).toHaveBeenCalledTimes(1);
-      expect(mockGfx.destroy).toHaveBeenCalledTimes(1);
-      expect(block.graphics).toBeNull();
+      expect(block.state).toBe('falling');
+      expect(block.speed).toBe(200);
+      expect(block.x).toBe(0);
+      expect(block.y).toBe(0);
     });
 
-    it('should be a no-op when graphics is null', () => {
+    it('should be safe to call reset multiple times', () => {
       const block = new TxBlock();
-      expect(block.graphics).toBeNull();
-      // Should not throw
-      block.clearGraphics();
-      expect(block.graphics).toBeNull();
-    });
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-    it('should tolerate graphics without removeFromParent/destroy', () => {
-      const block = new TxBlock();
-      block.graphics = {}; // bare object, no methods
-      block.clearGraphics();
-      expect(block.graphics).toBeNull();
+      block.reset();
+      block.reset();
+
+      expect(block.state).toBe('falling');
     });
   });
 
-  describe('reset() clears graphics', () => {
-    it('should call clearGraphics when reset is called with attached graphics', () => {
+  // ─── Animation State ───────────────────────────────────────────────
+  describe('animation state — shakePhase (ReExecution)', () => {
+    it('should accumulate shakePhase for ReExecution blocks', () => {
       const block = new TxBlock();
-      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT);
-      const mockGfx = { removeFromParent: vi.fn(), destroy: vi.fn() };
-      block.graphics = mockGfx;
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecution);
 
-      block.reset();
-
-      expect(mockGfx.removeFromParent).toHaveBeenCalledTimes(1);
-      expect(mockGfx.destroy).toHaveBeenCalledTimes(1);
-      expect(block.graphics).toBeNull();
+      block.update(0.1);
+      // 15 Hz × 2π × 0.1s = 3π ≈ 9.4248
+      expect(block.shakePhase).toBeCloseTo(0.1 * 15 * 2 * Math.PI, 5);
     });
 
-    it('should reset graphics field to null even without explicit clearGraphics', () => {
+    it('should accumulate shakePhase over multiple updates', () => {
       const block = new TxBlock();
-      block.graphics = { removeFromParent: vi.fn(), destroy: vi.fn() };
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecution);
+
+      block.update(0.05);
+      block.update(0.05);
+      expect(block.shakePhase).toBeCloseTo(0.1 * 15 * 2 * Math.PI, 5);
+    });
+
+    it('should NOT accumulate shakePhase for TxCommit blocks', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.TxCommit);
+
+      block.update(0.1);
+      expect(block.shakePhase).toBe(0);
+    });
+
+    it('should NOT accumulate shakePhase for Conflict blocks', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.Conflict);
+
+      block.update(0.1);
+      expect(block.shakePhase).toBe(0);
+    });
+
+    it('should accumulate shakePhase even when state is hit (visual shake persists)', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecution);
+      block.state = 'hit';
+
+      block.update(0.1);
+      expect(block.shakePhase).toBeCloseTo(0.1 * 15 * 2 * Math.PI, 5);
+    });
+  });
+
+  describe('animation state — flashElapsed (ReExecutionResolved)', () => {
+    it('should accumulate flashElapsed for ReExecutionResolved blocks', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecutionResolved);
+
+      block.update(0.016); // ~1 frame at 60fps
+      expect(block.flashElapsed).toBeCloseTo(0.016, 5);
+    });
+
+    it('should accumulate flashElapsed over multiple frames', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecutionResolved);
+
+      block.update(0.016);
+      block.update(0.016);
+      block.update(0.016);
+      expect(block.flashElapsed).toBeCloseTo(0.048, 5);
+    });
+
+    it('should NOT accumulate flashElapsed for TxCommit blocks', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.TxCommit);
+
+      block.update(0.1);
+      expect(block.flashElapsed).toBe(0);
+    });
+
+    it('should NOT accumulate flashElapsed for ReExecution blocks', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecution);
+
+      block.update(0.1);
+      expect(block.flashElapsed).toBe(0);
+    });
+  });
+
+  describe('reset() clears animation state', () => {
+    it('should reset shakePhase to 0 after accumulation', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecution);
+      block.update(0.5);
+      expect(block.shakePhase).toBeGreaterThan(0);
+
       block.reset();
-      expect(block.graphics).toBeNull();
+      expect(block.shakePhase).toBe(0);
+    });
+
+    it('should reset flashElapsed to 0 after accumulation', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecutionResolved);
+      block.update(0.5);
+      expect(block.flashElapsed).toBeGreaterThan(0);
+
+      block.reset();
+      expect(block.flashElapsed).toBe(0);
+    });
+
+    it('should allow re-init as different event type after reset', () => {
+      const block = new TxBlock();
+      // First: ReExecution with shake
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecution);
+      block.update(0.5);
+      expect(block.shakePhase).toBeGreaterThan(0);
+
+      block.reset();
+      // Re-init as ReExecutionResolved — shake should be 0, flash should accumulate
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.ReExecutionResolved);
+      expect(block.shakePhase).toBe(0);
+      expect(block.flashElapsed).toBe(0);
+
+      block.update(0.1);
+      expect(block.shakePhase).toBe(0);
+      expect(block.flashElapsed).toBeCloseTo(0.1, 5);
     });
   });
 });

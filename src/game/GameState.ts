@@ -97,6 +97,9 @@ export class GameState {
   /** Callback for audio — fired when a block is spawned. */
   onBlockSpawned: ((event: GameEvent) => void) | null = null;
 
+  /** Callback fired before releaseAll() — allows renderer to destroy Graphics. */
+  onBeforeClearAll: (() => void) | null = null;
+
   constructor(config?: Partial<GameConfig>, rng?: () => number) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.txPool = new ObjectPool(() => new TxBlock(), 200);
@@ -127,6 +130,8 @@ export class GameState {
   pushEvent(event: GameEvent): void {
     if (this.mode !== 'ws') {
       this.mode = 'ws';
+      // Notify renderer to destroy Graphics before pool reclaims blocks
+      this.onBeforeClearAll?.();
       // Clear any leftover demo blocks when switching to WS mode
       this.txPool.releaseAll();
     }
@@ -250,6 +255,8 @@ export class GameState {
    * Release all active blocks and reset to demo mode.
    */
   reset(): void {
+    // Notify renderer to destroy Graphics before pool reclaims blocks
+    this.onBeforeClearAll?.();
     this.txPool.releaseAll();
     this.spawner.resetState();
     this.mode = 'demo';
@@ -264,5 +271,6 @@ export class GameState {
     this.onBlockSpawned = null;
     this.onBlockHit = null;
     this.onBlockHitVisual = null;
+    this.onBeforeClearAll = null;
   }
 }
