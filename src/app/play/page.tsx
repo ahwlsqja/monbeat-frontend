@@ -21,5 +21,9 @@ const SimulationPanel = dynamic(() => import('../../components/SimulationPanel')
 });
 
 export default function PlayPage() {
-  return <SimulationPanel />;
+  return (
+    <div style={{ width: '100vw', height: '100vh' }}>
+      <SimulationPanel />
+    </div>
+  );
 }

@@ -67,6 +67,7 @@ export default function SimulationPanel() {
   const [phase, setPhase] = useState<Phase>('input');
   const [source, setSource] = useState(COUNTER_SOURCE);
   const [stats, setStats] = useState<CompletionStats | null>(null);
+  const [playKey, setPlayKey] = useState(0);
 
   const handlePlay = useCallback(() => {
     if (!source.trim()) return;
@@ -80,6 +81,7 @@ export default function SimulationPanel() {
 
   const handlePlayAgain = useCallback(() => {
     setStats(null);
+    setPlayKey(k => k + 1);
     setPhase('input');
   }, []);
 
@@ -88,8 +90,8 @@ export default function SimulationPanel() {
       data-testid="simulation-panel"
       style={{
         position: 'relative',
-        width: '100vw',
-        height: '100vh',
+        width: '100%',
+        height: '100%',
         overflow: 'hidden',
         background: '#0d0a1a',
       }}
@@ -166,7 +168,7 @@ export default function SimulationPanel() {
       {/* ── Playing phase ── */}
       {phase === 'playing' && (
         <ErrorBoundary>
-          <GameView source={source} onComplete={handleComplete} autoPlay />
+          <GameView key={playKey} source={source} onComplete={handleComplete} autoPlay />
         </ErrorBoundary>
       )}
 
