@@ -265,7 +265,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     completionStatsRef.current = null;
     pendingCompletionRef.current = null;
 
-    socket.simulate(source, 10);
+    socket.simulate(source, 3);
   }, [audioEnabled, source]);
 
   // Auto-play: trigger simulation when WS connects and autoPlay is set

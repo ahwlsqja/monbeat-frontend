@@ -354,7 +354,11 @@ export class PixiRenderer {
   /** Manual render call — replaces PixiJS auto ticker. */
   render(): void {
     if (!this.initialized || !this.app?.renderer) return;
-    this.app.renderer.render(this.app.stage);
+    try {
+      this.app.renderer.render(this.app.stage);
+    } catch {
+      // PixiJS internal race — renderer destroyed mid-frame. Safe to drop.
+    }
   }
 
   /** Resize the renderer + redraw the background layer. */
