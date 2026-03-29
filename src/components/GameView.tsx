@@ -70,8 +70,10 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
   // Minimum display time after completion — ensures blocks are visible before results
   const completionTimeRef = useRef<number>(0);
 
-  // PixiJS init promise — handleSimulate awaits this before triggering
-  const pixiReadyRef = useRef<Promise<void>>(Promise.resolve());
+  // PixiJS init gate — handleSimulate awaits this before triggering.
+  // Resolved inside the main useEffect after PixiJS init completes.
+  const pixiReadyResolveRef = useRef<(() => void) | null>(null);
+  const pixiReadyRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -80,6 +82,11 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     // --- PixiJS + engine setup ---
     const pixiRenderer = new PixiRenderer();
     let destroyed = false;
+
+    // Create a fresh gate promise — handleSimulate awaits this
+    pixiReadyRef.current = new Promise<void>((resolve) => {
+      pixiReadyResolveRef.current = resolve;
+    });
 
     // --- AdaptivePerformance: tier detection (must precede init for config) ---
     const adaptive = new AdaptivePerformance();
@@ -93,9 +100,9 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       });
       if (destroyed) { pixiRenderer.destroy(); return; }
       pixiRenderer.drawBackground(width || 800, height || 600);
+      // Signal that PixiJS is ready — unblocks handleSimulate
+      pixiReadyResolveRef.current?.();
     })();
-
-    pixiReadyRef.current = initPromise;
 
     const gameState = new GameState();
     gameState.setDimensions(container.clientWidth || 800, container.clientHeight || 600);
@@ -245,7 +252,9 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     if (!socket || socket.state !== 'connected' || !gs) return;
 
     // Wait for PixiJS to finish initializing before sending simulate
-    await pixiReadyRef.current;
+    if (pixiReadyRef.current) {
+      await pixiReadyRef.current;
+    }
 
     setWsError(null);
 
