@@ -29,7 +29,7 @@ export type GameEventType = (typeof GameEventType)[keyof typeof GameEventType];
 // ---------------------------------------------------------------------------
 
 export const EVENT_COLORS: Record<GameEventType, string> = {
-  [GameEventType.TxCommit]: '#836ef9', // monad purple — clean commit
+  [GameEventType.TxCommit]: '#4ade80', // green — clean commit (distinct from purple BG)
   [GameEventType.Conflict]: '#ef4444', // red — conflict
   [GameEventType.ReExecution]: '#facc15', // yellow — re-execution
   [GameEventType.ReExecutionResolved]: '#60a5fa', // blue — resolved

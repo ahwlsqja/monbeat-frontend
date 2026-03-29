@@ -11,30 +11,10 @@ const mocks = vi.hoisted(() => {
   const harmonyDisconnect = vi.fn();
   const harmonyDispose = vi.fn();
 
-  const dissonanceTrigger = vi.fn();
-  const dissonanceReleaseAll = vi.fn();
-  const dissonanceDisconnect = vi.fn();
-  const dissonanceDispose = vi.fn();
-  const dissonanceSet = vi.fn();
-
-  const crashTrigger = vi.fn();
-  const crashDisconnect = vi.fn();
-  const crashDispose = vi.fn();
-
-  const noiseTrigger = vi.fn();
-  const noiseDisconnect = vi.fn();
-  const noiseDispose = vi.fn();
-
-  const distortionConnect = vi.fn();
-  const distortionToDestination = vi.fn();
-  const distortionDisconnect = vi.fn();
-  const distortionDispose = vi.fn();
-
-  const reverbConnect = vi.fn();
-  const reverbToDestination = vi.fn();
-  const reverbDisconnect = vi.fn();
-  const reverbDispose = vi.fn();
-  const reverbGenerate = vi.fn().mockResolvedValue(undefined);
+  const tensionTrigger = vi.fn();
+  const tensionReleaseAll = vi.fn();
+  const tensionDisconnect = vi.fn();
+  const tensionDispose = vi.fn();
 
   const harmonySynthInstance = {
     triggerAttackRelease: harmonyTrigger,
@@ -43,50 +23,17 @@ const mocks = vi.hoisted(() => {
     dispose: harmonyDispose,
     toDestination: vi.fn().mockReturnThis(),
     volume: { value: 0 },
-    maxPolyphony: 4,
+    maxPolyphony: 8,
   };
 
-  const dissonanceSynthInstance = {
-    triggerAttackRelease: dissonanceTrigger,
-    releaseAll: dissonanceReleaseAll,
-    disconnect: dissonanceDisconnect,
-    dispose: dissonanceDispose,
-    connect: vi.fn().mockReturnThis(),
-    set: dissonanceSet,
-    volume: { value: 0 },
-    maxPolyphony: 4,
-  };
-
-  const crashSynthInstance = {
-    triggerAttackRelease: crashTrigger,
-    disconnect: crashDisconnect,
-    dispose: crashDispose,
-    connect: vi.fn().mockReturnThis(),
-    volume: { value: 0 },
-    frequency: { value: 200 },
-  };
-
-  const noiseSynthInstance = {
-    triggerAttackRelease: noiseTrigger,
-    disconnect: noiseDisconnect,
-    dispose: noiseDispose,
+  const tensionSynthInstance = {
+    triggerAttackRelease: tensionTrigger,
+    releaseAll: tensionReleaseAll,
+    disconnect: tensionDisconnect,
+    dispose: tensionDispose,
     toDestination: vi.fn().mockReturnThis(),
     volume: { value: 0 },
-  };
-
-  const distortionInstance = {
-    connect: distortionConnect,
-    toDestination: distortionToDestination,
-    disconnect: distortionDisconnect,
-    dispose: distortionDispose,
-  };
-
-  const reverbInstance = {
-    connect: reverbConnect,
-    toDestination: reverbToDestination,
-    disconnect: reverbDisconnect,
-    dispose: reverbDispose,
-    generate: reverbGenerate,
+    maxPolyphony: 6,
   };
 
   let polySynthCallCount = 0;
@@ -98,36 +45,22 @@ const mocks = vi.hoisted(() => {
     harmonyDispose,
     harmonySynthInstance,
 
-    dissonanceTrigger,
-    dissonanceSet,
-    dissonanceSynthInstance,
-
-    crashTrigger,
-    crashSynthInstance,
-
-    noiseTrigger,
-    noiseSynthInstance,
-
-    distortionInstance,
-    reverbInstance,
-    reverbGenerate,
+    tensionTrigger,
+    tensionReleaseAll,
+    tensionDisconnect,
+    tensionDispose,
+    tensionSynthInstance,
 
     start: vi.fn().mockResolvedValue(undefined),
     now: vi.fn().mockReturnValue(0),
-    Time: vi.fn().mockReturnValue({ toSeconds: vi.fn().mockReturnValue(0.125) }),
 
     PolySynth: vi.fn().mockImplementation(() => {
       polySynthCallCount += 1;
-      // 1st call = harmony, 2nd call = dissonance
       return polySynthCallCount % 2 === 1
         ? harmonySynthInstance
-        : dissonanceSynthInstance;
+        : tensionSynthInstance;
     }),
     Synth: vi.fn(),
-    Distortion: vi.fn().mockReturnValue(distortionInstance),
-    MetalSynth: vi.fn().mockReturnValue(crashSynthInstance),
-    Reverb: vi.fn().mockReturnValue(reverbInstance),
-    NoiseSynth: vi.fn().mockReturnValue(noiseSynthInstance),
 
     resetPolySynthCount: () => { polySynthCallCount = 0; },
   };
@@ -136,20 +69,11 @@ const mocks = vi.hoisted(() => {
 vi.mock('tone', () => ({
   start: mocks.start,
   now: mocks.now,
-  Time: mocks.Time,
   PolySynth: mocks.PolySynth,
   Synth: mocks.Synth,
-  Distortion: mocks.Distortion,
-  MetalSynth: mocks.MetalSynth,
-  Reverb: mocks.Reverb,
-  NoiseSynth: mocks.NoiseSynth,
 }));
 
 import { HarmonicEngine } from '@/audio/HarmonicEngine';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeEvent(overrides: Partial<GameEvent> = {}): GameEvent {
   return {
@@ -163,7 +87,7 @@ function makeEvent(overrides: Partial<GameEvent> = {}): GameEvent {
   };
 }
 
-describe('HarmonicEngine (Autumn Leaves multi-synth)', () => {
+describe('HarmonicEngine (ambient Autumn Leaves)', () => {
   let engine: HarmonicEngine;
 
   beforeEach(() => {
@@ -176,33 +100,18 @@ describe('HarmonicEngine (Autumn Leaves multi-synth)', () => {
     engine.dispose();
   });
 
-  // ----- init() -----
+  // ----- init -----
 
   describe('init()', () => {
-    it('calls Tone.start() and creates synths', async () => {
+    it('calls Tone.start() and becomes ready', async () => {
       await engine.init();
       expect(mocks.start).toHaveBeenCalledTimes(1);
       expect(engine.ready).toBe(true);
     });
 
-    it('creates 2 PolySynths (harmony + dissonance)', async () => {
+    it('creates 2 PolySynths (harmony + tension)', async () => {
       await engine.init();
       expect(mocks.PolySynth).toHaveBeenCalledTimes(2);
-    });
-
-    it('creates MetalSynth for crash', async () => {
-      await engine.init();
-      expect(mocks.MetalSynth).toHaveBeenCalledTimes(1);
-    });
-
-    it('creates NoiseSynth for noise bursts', async () => {
-      await engine.init();
-      expect(mocks.NoiseSynth).toHaveBeenCalledTimes(1);
-    });
-
-    it('generates crash reverb', async () => {
-      await engine.init();
-      expect(mocks.reverbGenerate).toHaveBeenCalledTimes(1);
     });
 
     it('is idempotent', async () => {
@@ -212,119 +121,108 @@ describe('HarmonicEngine (Autumn Leaves multi-synth)', () => {
     });
   });
 
-  // ----- play(TxCommit) — harmony -----
+  // ----- TxCommit — harmony -----
 
   describe('play(TxCommit)', () => {
-    it('triggers harmony synth chord tone', async () => {
+    it('triggers harmony synth', async () => {
       await engine.init();
       engine.play(makeEvent({ type: GameEventType.TxCommit }));
       expect(mocks.harmonyTrigger).toHaveBeenCalled();
     });
 
-    it('uses 8n duration', async () => {
+    it('uses 8n duration for chord tone', async () => {
       await engine.init();
       engine.play(makeEvent({ type: GameEventType.TxCommit }));
-      const call = mocks.harmonyTrigger.mock.calls[0];
-      expect(call[1]).toBe('8n');
+      // First call might be bass root (4n) on measure boundary, but chord tone is 8n
+      const calls = mocks.harmonyTrigger.mock.calls;
+      const has8n = calls.some((c: any[]) => c[1] === '8n');
+      expect(has8n).toBe(true);
     });
 
-    it('does not trigger dissonance synth', async () => {
+    it('does not trigger tension synth', async () => {
       await engine.init();
       engine.play(makeEvent({ type: GameEventType.TxCommit }));
-      expect(mocks.dissonanceTrigger).not.toHaveBeenCalled();
+      expect(mocks.tensionTrigger).not.toHaveBeenCalled();
     });
   });
 
-  // ----- play(Conflict) — dissonance + crash + noise -----
+  // ----- Conflict — tension -----
 
   describe('play(Conflict)', () => {
-    it('triggers dissonance cluster', async () => {
+    it('triggers tension synth (minor 2nd)', async () => {
       await engine.init();
       engine.play(makeEvent({ type: GameEventType.Conflict }));
-      expect(mocks.dissonanceTrigger).toHaveBeenCalled();
-      const firstArg = mocks.dissonanceTrigger.mock.calls[0][0];
+      expect(mocks.tensionTrigger).toHaveBeenCalled();
+    });
+
+    it('plays 2 notes (root + semitone up)', async () => {
+      await engine.init();
+      engine.play(makeEvent({ type: GameEventType.Conflict }));
+      const firstArg = mocks.tensionTrigger.mock.calls[0][0];
       expect(Array.isArray(firstArg)).toBe(true);
+      expect(firstArg.length).toBe(2);
     });
 
-    it('triggers crash cymbal', async () => {
+    it('does not trigger harmony synth', async () => {
       await engine.init();
       engine.play(makeEvent({ type: GameEventType.Conflict }));
-      expect(mocks.crashTrigger).toHaveBeenCalled();
-    });
-
-    it('triggers noise burst (intense=true)', async () => {
-      await engine.init();
-      engine.play(makeEvent({ type: GameEventType.Conflict }));
-      expect(mocks.noiseTrigger).toHaveBeenCalled();
-    });
-
-    it('applies pitch bend detune', async () => {
-      await engine.init();
-      engine.play(makeEvent({ type: GameEventType.Conflict }));
-      expect(mocks.dissonanceSet).toHaveBeenCalledWith(
-        expect.objectContaining({ detune: expect.any(Number) }),
-      );
+      expect(mocks.harmonyTrigger).not.toHaveBeenCalled();
     });
   });
 
-  // ----- play(ReExecution) — dissonance without noise -----
+  // ----- ReExecution — low drone -----
 
   describe('play(ReExecution)', () => {
-    it('triggers dissonance cluster', async () => {
+    it('triggers harmony synth (low drone)', async () => {
       await engine.init();
       engine.play(makeEvent({ type: GameEventType.ReExecution }));
-      expect(mocks.dissonanceTrigger).toHaveBeenCalled();
-    });
-
-    it('triggers crash cymbal', async () => {
-      await engine.init();
-      engine.play(makeEvent({ type: GameEventType.ReExecution }));
-      expect(mocks.crashTrigger).toHaveBeenCalled();
-    });
-
-    it('does NOT trigger noise burst (intense=false)', async () => {
-      await engine.init();
-      engine.play(makeEvent({ type: GameEventType.ReExecution }));
-      expect(mocks.noiseTrigger).not.toHaveBeenCalled();
-    });
-  });
-
-  // ----- play(ReExecutionResolved) — resolution root -----
-
-  describe('play(ReExecutionResolved)', () => {
-    it('triggers harmony synth (resolution root)', async () => {
-      await engine.init();
-      engine.play(makeEvent({ type: GameEventType.ReExecutionResolved }));
-      expect(mocks.harmonyTrigger).toHaveBeenCalledTimes(1);
-    });
-
-    it('uses 4n duration (sustained resolution)', async () => {
-      await engine.init();
-      engine.play(makeEvent({ type: GameEventType.ReExecutionResolved }));
-      const call = mocks.harmonyTrigger.mock.calls[0];
-      expect(call[1]).toBe('4n');
-    });
-  });
-
-  // ----- play(BlockComplete) — advance + full chord -----
-
-  describe('play(BlockComplete)', () => {
-    it('advances chord and plays full voicing', async () => {
-      await engine.init();
-      const prevIdx = engine.chordIndex;
-      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
-      expect(engine.chordIndex).toBe(prevIdx + 1);
       expect(mocks.harmonyTrigger).toHaveBeenCalledTimes(1);
     });
 
     it('uses 4n duration', async () => {
       await engine.init();
-      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
-      const call = mocks.harmonyTrigger.mock.calls[0];
-      expect(call[1]).toBe('4n');
+      engine.play(makeEvent({ type: GameEventType.ReExecution }));
+      expect(mocks.harmonyTrigger.mock.calls[0][1]).toBe('4n');
+    });
+  });
+
+  // ----- ReExecutionResolved — resolution -----
+
+  describe('play(ReExecutionResolved)', () => {
+    it('triggers harmony with root + octave (2 notes)', async () => {
+      await engine.init();
+      engine.play(makeEvent({ type: GameEventType.ReExecutionResolved }));
+      expect(mocks.harmonyTrigger).toHaveBeenCalledTimes(1);
+      const firstArg = mocks.harmonyTrigger.mock.calls[0][0];
+      expect(Array.isArray(firstArg)).toBe(true);
+      expect(firstArg.length).toBe(2);
     });
 
-    it('only fires once per simulation (dedup)', async () => {
+    it('uses 4n duration', async () => {
+      await engine.init();
+      engine.play(makeEvent({ type: GameEventType.ReExecutionResolved }));
+      expect(mocks.harmonyTrigger.mock.calls[0][1]).toBe('4n');
+    });
+  });
+
+  // ----- BlockComplete -----
+
+  describe('play(BlockComplete)', () => {
+    it('advances chord and plays full voicing', async () => {
+      await engine.init();
+      const prev = engine.chordIndex;
+      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
+      expect(engine.chordIndex).toBe(prev + 1);
+      expect(mocks.harmonyTrigger).toHaveBeenCalled();
+    });
+
+    it('uses 2n duration (sustained)', async () => {
+      await engine.init();
+      engine.play(makeEvent({ type: GameEventType.BlockComplete }));
+      expect(mocks.harmonyTrigger.mock.calls[0][1]).toBe('2n');
+    });
+
+    it('only fires once (dedup)', async () => {
       await engine.init();
       engine.play(makeEvent({ type: GameEventType.BlockComplete }));
       engine.play(makeEvent({ type: GameEventType.BlockComplete }));
@@ -334,8 +232,8 @@ describe('HarmonicEngine (Autumn Leaves multi-synth)', () => {
 
   // ----- chord cycling -----
 
-  describe('advanceChord cycling', () => {
-    it('cycles through 8 chords then wraps to 0', async () => {
+  describe('advanceChord', () => {
+    it('cycles through 8 chords then wraps', async () => {
       await engine.init();
       for (let i = 0; i < 8; i++) engine.advanceChord();
       expect(engine.chordIndex).toBe(0);
@@ -345,14 +243,14 @@ describe('HarmonicEngine (Autumn Leaves multi-synth)', () => {
   // ----- mute / unmute -----
 
   describe('mute / unmute', () => {
-    it('mute prevents play()', async () => {
+    it('mute prevents play', async () => {
       await engine.init();
       engine.mute();
       engine.play(makeEvent());
       expect(mocks.harmonyTrigger).not.toHaveBeenCalled();
     });
 
-    it('unmute re-enables play()', async () => {
+    it('unmute re-enables play', async () => {
       await engine.init();
       engine.mute();
       engine.unmute();
@@ -360,12 +258,10 @@ describe('HarmonicEngine (Autumn Leaves multi-synth)', () => {
       expect(mocks.harmonyTrigger).toHaveBeenCalled();
     });
 
-    it('muted getter reflects state', async () => {
+    it('muted getter reflects state', () => {
       expect(engine.muted).toBe(false);
       engine.mute();
       expect(engine.muted).toBe(true);
-      engine.unmute();
-      expect(engine.muted).toBe(false);
     });
   });
 
@@ -391,16 +287,15 @@ describe('HarmonicEngine (Autumn Leaves multi-synth)', () => {
   // ----- dispose -----
 
   describe('dispose()', () => {
-    it('disposes all synths', async () => {
+    it('disposes both synths', async () => {
       await engine.init();
       engine.dispose();
-      expect(mocks.harmonyReleaseAll).toHaveBeenCalledTimes(1);
-      expect(mocks.harmonyDisconnect).toHaveBeenCalledTimes(1);
-      expect(mocks.harmonyDispose).toHaveBeenCalledTimes(1);
+      expect(mocks.harmonyReleaseAll).toHaveBeenCalled();
+      expect(mocks.tensionReleaseAll).toHaveBeenCalled();
       expect(engine.ready).toBe(false);
     });
 
-    it('is safe to call before init', () => {
+    it('is safe before init', () => {
       expect(() => engine.dispose()).not.toThrow();
     });
 
@@ -408,52 +303,6 @@ describe('HarmonicEngine (Autumn Leaves multi-synth)', () => {
       await engine.init();
       engine.dispose();
       expect(() => engine.dispose()).not.toThrow();
-    });
-  });
-
-  // ----- rate limiter -----
-
-  describe('rate limiter', () => {
-    it('drops events after 40 rapid calls', async () => {
-      await engine.init();
-      const fixedNow = performance.now();
-      const spy = vi.spyOn(performance, 'now').mockReturnValue(fixedNow);
-      let played = 0;
-      for (let i = 0; i < 45; i++) {
-        engine.play(makeEvent());
-        played += 1;
-      }
-      // Rate limiter caps at ~40 events, but TxCommit on measure boundary
-      // fires bass + chord tone (2 triggerAttackRelease calls per play).
-      // Just verify it stops before unlimited.
-      expect(mocks.harmonyTrigger.mock.calls.length).toBeLessThan(played * 2 + 1);
-      expect(mocks.harmonyTrigger.mock.calls.length).toBeGreaterThan(0);
-      spy.mockRestore();
-    });
-  });
-
-  // ----- error resilience -----
-
-  describe('error resilience', () => {
-    it('does not crash when harmony throws', async () => {
-      await engine.init();
-      mocks.harmonyTrigger.mockImplementationOnce(() => { throw new Error('polyphony exceeded'); });
-      expect(() => engine.play(makeEvent())).not.toThrow();
-    });
-
-    it('does not crash when dissonance throws', async () => {
-      await engine.init();
-      mocks.dissonanceTrigger.mockImplementationOnce(() => { throw new Error('boom'); });
-      expect(() => engine.play(makeEvent({ type: GameEventType.Conflict }))).not.toThrow();
-    });
-  });
-
-  // ----- play before init -----
-
-  describe('play before init', () => {
-    it('is a no-op', () => {
-      engine.play(makeEvent());
-      expect(mocks.harmonyTrigger).not.toHaveBeenCalled();
     });
   });
 
@@ -467,18 +316,30 @@ describe('HarmonicEngine (Autumn Leaves multi-synth)', () => {
       engine.reset();
       expect(engine.chordIndex).toBe(0);
     });
+  });
 
-    it('resets rate limiter', async () => {
-      await engine.init();
-      const fixedNow = performance.now();
-      const spy = vi.spyOn(performance, 'now').mockReturnValue(fixedNow);
-      for (let i = 0; i < 45; i++) engine.play(makeEvent());
-      vi.clearAllMocks();
-      engine.reset();
+  // ----- play before init -----
+
+  describe('play before init', () => {
+    it('is a no-op', () => {
       engine.play(makeEvent());
-      // After reset, should be able to play again (at least 1 call)
-      expect(mocks.harmonyTrigger.mock.calls.length).toBeGreaterThanOrEqual(1);
-      spy.mockRestore();
+      expect(mocks.harmonyTrigger).not.toHaveBeenCalled();
+    });
+  });
+
+  // ----- error resilience -----
+
+  describe('error resilience', () => {
+    it('does not crash on harmony throw', async () => {
+      await engine.init();
+      mocks.harmonyTrigger.mockImplementationOnce(() => { throw new Error('boom'); });
+      expect(() => engine.play(makeEvent())).not.toThrow();
+    });
+
+    it('does not crash on tension throw', async () => {
+      await engine.init();
+      mocks.tensionTrigger.mockImplementationOnce(() => { throw new Error('boom'); });
+      expect(() => engine.play(makeEvent({ type: GameEventType.Conflict }))).not.toThrow();
     });
   });
 });

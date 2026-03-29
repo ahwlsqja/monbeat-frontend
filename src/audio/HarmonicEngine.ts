@@ -1,18 +1,16 @@
 /**
- * HarmonicEngine — Tone.js Autumn Leaves chord-progression engine for monbeat.
+ * HarmonicEngine — Tone.js ambient chord-progression engine for monbeat.
  *
- * Ported from Vibe-Loom AudioSequencer's proven musical structure:
- *   - Harmony synth: warm PolySynth for clean TxCommit chord tones
- *   - Dissonance synth: sawtooth + distortion for Conflict/ReExecution
- *   - Crash synth: MetalSynth + reverb for heavy conflict emphasis
- *   - Noise synth: brown noise burst for extreme conflicts
+ * Plays Autumn Leaves (Bb key) chord progression as a warm ambient pad.
+ * Designed for irregular WS event timing — notes are soft and ambient,
+ * not percussive. No harsh sounds (no MetalSynth, no NoiseSynth, no Distortion).
  *
  * Each GameEventType maps to a musically-meaningful response:
- *   - TxCommit: shuffled chord tone + bass root on measure boundary
- *   - Conflict: dissonance cluster + crash cymbal + pitch bend
- *   - ReExecution: dissonance cluster + detune sweep
- *   - ReExecutionResolved: stable root chord tone (resolution)
- *   - BlockComplete: advance chord + full voicing
+ *   - TxCommit: warm chord tone (nearest note from current chord)
+ *   - Conflict: minor-2nd tension cluster (soft, detuned)
+ *   - ReExecution: low root drone (sustain feel)
+ *   - ReExecutionResolved: octave root resolution
+ *   - BlockComplete: advance chord + full soft voicing
  */
 
 import * as Tone from 'tone';
@@ -27,8 +25,8 @@ class TokenBucket {
   private lastRefill: number;
 
   constructor(
-    private readonly maxTokens: number = 40,
-    private readonly refillRate: number = 40,
+    private readonly maxTokens: number = 20,
+    private readonly refillRate: number = 20,
   ) {
     this.tokens = maxTokens;
     this.lastRefill = performance.now();
@@ -71,8 +69,6 @@ const CHORD_PROGRESSION = [
   ['G3', 'Bb3', 'D4', 'F4'],    // Gm7
 ] as const;
 
-const DISSONANCE_CLUSTER = ['B3', 'F4', 'G#4'] as const;
-
 const STEPS_PER_MEASURE = 8;
 
 function downOneOctave(note: string): string {
@@ -86,19 +82,16 @@ function downOneOctave(note: string): string {
 // ---------------------------------------------------------------------------
 
 export class HarmonicEngine {
-  // Synths — matching AudioSequencer's proven sound design
+  /** Warm pad synth — triangle wave, long release, for harmony. */
   private harmonySynth: Tone.PolySynth | null = null;
-  private dissonanceSynth: Tone.PolySynth | null = null;
-  private dissonanceDistortion: Tone.Distortion | null = null;
-  private crashSynth: Tone.MetalSynth | null = null;
-  private crashReverb: Tone.Reverb | null = null;
-  private noiseSynth: Tone.NoiseSynth | null = null;
+  /** Soft tension synth — sine wave, gentle for conflict moments. */
+  private tensionSynth: Tone.PolySynth | null = null;
 
   private _ready = false;
   private _muted = false;
   private currentChordIndex = 0;
   private stepIndex = 0;
-  private limiter = new TokenBucket(40, 40);
+  private limiter = new TokenBucket(20, 20);
   private blockCompletePlayed = false;
 
   // Shuffled notes for current quarter-block
@@ -122,61 +115,38 @@ export class HarmonicEngine {
 
     await Tone.start();
 
-    // Harmony synth — warm pad for clean commits
-    this.harmonySynth = new Tone.PolySynth(Tone.Synth).toDestination();
-    this.harmonySynth.volume.value = -8;
-    this.harmonySynth.maxPolyphony = 8;
-
-    // Dissonance synth — harsh sawtooth for conflicts
-    this.dissonanceDistortion = new Tone.Distortion(0.8);
-    this.dissonanceSynth = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'sawtooth' },
+    // Warm pad — triangle oscillator, long attack + release for ambient feel
+    this.harmonySynth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'triangle' },
       envelope: {
-        attack: 0.002,
-        decay: 0.12,
-        sustain: 0.35,
-        release: 0.2,
-      },
-    }).connect(this.dissonanceDistortion);
-    this.dissonanceDistortion.toDestination();
-    this.dissonanceSynth.volume.value = -12;
-    this.dissonanceSynth.maxPolyphony = 8;
-
-    // Crash cymbal synth — metallic hit for conflicts
-    this.crashReverb = new Tone.Reverb({ decay: 2, wet: 0.32 });
-    this.crashSynth = new Tone.MetalSynth({
-      volume: -15,
-      harmonicity: 8.5,
-      modulationIndex: 40,
-      resonance: 2800,
-      octaves: 2,
-      envelope: {
-        attack: 0.001,
-        decay: 0.25,
-        release: 0.12,
-      },
-    }).connect(this.crashReverb);
-    this.crashReverb.toDestination();
-    await this.crashReverb.generate();
-
-    // Brown noise burst — extreme conflict emphasis
-    this.noiseSynth = new Tone.NoiseSynth({
-      noise: { type: 'brown' },
-      envelope: {
-        attack: 0.001,
-        decay: 0.06,
-        sustain: 0,
-        release: 0.02,
+        attack: 0.08,
+        decay: 0.4,
+        sustain: 0.3,
+        release: 1.2,
       },
     }).toDestination();
-    this.noiseSynth.volume.value = -24;
+    this.harmonySynth.volume.value = -14;
+    this.harmonySynth.maxPolyphony = 8;
+
+    // Soft tension — sine wave, quick decay, gentle dissonance
+    this.tensionSynth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'sine' },
+      envelope: {
+        attack: 0.01,
+        decay: 0.3,
+        sustain: 0.1,
+        release: 0.6,
+      },
+    }).toDestination();
+    this.tensionSynth.volume.value = -18;
+    this.tensionSynth.maxPolyphony = 6;
 
     this._ready = true;
     this.blockCompletePlayed = false;
   }
 
   // -----------------------------------------------------------------------
-  // Event playback — maps GameEventType to AudioSequencer-style sounds
+  // Event playback
   // -----------------------------------------------------------------------
 
   play(event: GameEvent): void {
@@ -188,10 +158,10 @@ export class HarmonicEngine {
         this.playHarmony();
         break;
       case GameEventType.Conflict:
-        this.playDissonance(true);
+        this.playTension();
         break;
       case GameEventType.ReExecution:
-        this.playDissonance(false);
+        this.playLowDrone();
         break;
       case GameEventType.ReExecutionResolved:
         this.playResolution();
@@ -208,7 +178,7 @@ export class HarmonicEngine {
   }
 
   /**
-   * TxCommit — clean Autumn Leaves chord tone.
+   * TxCommit — warm chord tone from Autumn Leaves progression.
    * Bass root on measure boundary, shuffled chord tone otherwise.
    */
   private playHarmony(): void {
@@ -216,7 +186,7 @@ export class HarmonicEngine {
     const chord = this.currentChord;
     const now = Tone.now();
 
-    // Reshuffle every 4 steps (quarter-block)
+    // Reshuffle every 4 steps
     const quarterBlock = Math.floor(this.stepIndex / 4);
     if (this.stepIndex % 4 === 0 || this.lastShuffledQuarter !== quarterBlock) {
       this.shuffledNotes = [...chord].sort(() => Math.random() - 0.5);
@@ -228,7 +198,7 @@ export class HarmonicEngine {
       if (this.stepIndex % STEPS_PER_MEASURE === 0) {
         const root = chord[0];
         if (root) {
-          this.harmonySynth.triggerAttackRelease(downOneOctave(root), '8n', now);
+          this.harmonySynth.triggerAttackRelease(downOneOctave(root), '4n', now);
         }
       }
 
@@ -241,54 +211,46 @@ export class HarmonicEngine {
   }
 
   /**
-   * Conflict/ReExecution — dissonance cluster + crash + optional noise.
+   * Conflict — soft minor-2nd tension. Two notes a semitone apart.
+   * Much gentler than AudioSequencer's harsh dissonance cluster.
    */
-  private playDissonance(intense: boolean): void {
-    const now = Tone.now();
+  private playTension(): void {
+    if (!this.tensionSynth) return;
+    const chord = this.currentChord;
+    const root = chord[0];
+    if (!root) return;
 
     try {
-      // Dissonance cluster
-      if (this.dissonanceSynth) {
-        this.dissonanceSynth.set({ detune: 0 });
-
-        if (intense) {
-          // Extreme: pitch bend + noise burst
-          const bendCents = (Math.random() > 0.5 ? 1 : -1) * (120 + 5 * 35);
-          this.dissonanceSynth.set({ detune: bendCents });
-          this.noiseSynth?.triggerAttackRelease('16n', now);
-
-          // Reset detune after 220ms
-          setTimeout(() => {
-            try { this.dissonanceSynth?.set({ detune: 0 }); } catch { /* safe */ }
-          }, 220);
-        }
-
-        this.dissonanceSynth.triggerAttackRelease(
-          [...DISSONANCE_CLUSTER],
+      // Minor 2nd interval — root + one semitone up = gentle tension
+      const m = root.match(/^([A-G][#b]?)(\d+)$/i);
+      if (m) {
+        // Play just root and a half-step above for subtle dissonance
+        this.tensionSynth.triggerAttackRelease(
+          [root, this.semitonesUp(root, 1)],
           '8n',
-          now,
-        );
-      }
-
-      // Crash cymbal
-      if (this.crashSynth) {
-        this.crashSynth.triggerAttackRelease('F#6', '32n', now);
-      }
-
-      // Secondary dissonance for intense conflicts
-      if (intense && this.dissonanceSynth) {
-        const tSecondary = now + Tone.Time('32n').toSeconds();
-        this.dissonanceSynth.triggerAttackRelease(
-          ['C4', 'F#4', 'B4'],
-          '16n',
-          tSecondary,
+          Tone.now(),
         );
       }
     } catch { /* safe */ }
   }
 
   /**
-   * ReExecutionResolved — stable root note, resolution feel.
+   * ReExecution — low root drone, sustained feel.
+   */
+  private playLowDrone(): void {
+    if (!this.harmonySynth) return;
+    const chord = this.currentChord;
+    const root = chord[0];
+    if (!root) return;
+
+    try {
+      const lowNote = downOneOctave(downOneOctave(root));
+      this.harmonySynth.triggerAttackRelease(lowNote, '4n', Tone.now());
+    } catch { /* safe */ }
+  }
+
+  /**
+   * ReExecutionResolved — root + octave, open feel.
    */
   private playResolution(): void {
     if (!this.harmonySynth) return;
@@ -297,12 +259,16 @@ export class HarmonicEngine {
     if (!root) return;
 
     try {
-      this.harmonySynth.triggerAttackRelease(root, '4n', Tone.now());
+      this.harmonySynth.triggerAttackRelease(
+        [root, downOneOctave(root)],
+        '4n',
+        Tone.now(),
+      );
     } catch { /* safe */ }
   }
 
   /**
-   * BlockComplete — advance chord, play full voicing.
+   * BlockComplete — advance chord, play soft full voicing.
    */
   private playBlockComplete(): void {
     this.advanceChord();
@@ -312,10 +278,39 @@ export class HarmonicEngine {
     try {
       this.harmonySynth.triggerAttackRelease(
         [...chord],
-        '4n',
+        '2n',
         Tone.now(),
       );
     } catch { /* safe */ }
+  }
+
+  // -----------------------------------------------------------------------
+  // Helpers
+  // -----------------------------------------------------------------------
+
+  /** Shift a note up by N semitones (simple string manipulation). */
+  private semitonesUp(note: string, semitones: number): string {
+    const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const m = note.match(/^([A-G][#b]?)(\d+)$/i);
+    if (!m) return note;
+
+    let noteName = m[1];
+    let octave = parseInt(m[2], 10);
+
+    // Normalize flats to sharps for lookup
+    if (noteName === 'Eb') noteName = 'D#';
+    if (noteName === 'Bb') noteName = 'A#';
+    if (noteName === 'Ab') noteName = 'G#';
+    if (noteName === 'Db') noteName = 'C#';
+    if (noteName === 'Gb') noteName = 'F#';
+
+    let idx = notes.indexOf(noteName);
+    if (idx === -1) return note;
+
+    idx = (idx + semitones) % 12;
+    if (idx + semitones >= 12) octave += 1;
+
+    return `${notes[idx]}${octave}`;
   }
 
   // -----------------------------------------------------------------------
@@ -330,21 +325,10 @@ export class HarmonicEngine {
   // Mute / Pause
   // -----------------------------------------------------------------------
 
-  mute(): void {
-    this._muted = true;
-  }
-
-  unmute(): void {
-    this._muted = false;
-  }
-
-  pause(): void {
-    this._muted = true;
-  }
-
-  resume(): void {
-    this._muted = false;
-  }
+  mute(): void { this._muted = true; }
+  unmute(): void { this._muted = false; }
+  pause(): void { this._muted = true; }
+  resume(): void { this._muted = false; }
 
   // -----------------------------------------------------------------------
   // Reset / Dispose
@@ -361,18 +345,10 @@ export class HarmonicEngine {
 
   dispose(): void {
     try { this.harmonySynth?.releaseAll(); this.harmonySynth?.disconnect(); this.harmonySynth?.dispose(); } catch { /* */ }
-    try { this.dissonanceSynth?.releaseAll(); this.dissonanceSynth?.disconnect(); this.dissonanceSynth?.dispose(); } catch { /* */ }
-    try { this.dissonanceDistortion?.disconnect(); this.dissonanceDistortion?.dispose(); } catch { /* */ }
-    try { this.crashSynth?.disconnect(); this.crashSynth?.dispose(); } catch { /* */ }
-    try { this.crashReverb?.disconnect(); this.crashReverb?.dispose(); } catch { /* */ }
-    try { this.noiseSynth?.disconnect(); this.noiseSynth?.dispose(); } catch { /* */ }
+    try { this.tensionSynth?.releaseAll(); this.tensionSynth?.disconnect(); this.tensionSynth?.dispose(); } catch { /* */ }
 
     this.harmonySynth = null;
-    this.dissonanceSynth = null;
-    this.dissonanceDistortion = null;
-    this.crashSynth = null;
-    this.crashReverb = null;
-    this.noiseSynth = null;
+    this.tensionSynth = null;
 
     this._ready = false;
     this._muted = false;
