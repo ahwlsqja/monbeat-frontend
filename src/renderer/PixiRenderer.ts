@@ -251,6 +251,7 @@ export class PixiRenderer {
     const gfx = createBlockGraphics(block, {
       enableGlow: this.enableGlow,
       iconTexture,
+      txIndex: block.txIndex,
     });
     this.blockGraphicsMap.set(block, gfx);
     this.gameLayer.addChild(gfx);
@@ -300,6 +301,7 @@ export class PixiRenderer {
         gfx = createBlockGraphics(block, {
           enableGlow: this.enableGlow,
           iconTexture,
+          txIndex: block.txIndex,
         });
         this.blockGraphicsMap.set(block, gfx);
         this.gameLayer.addChild(gfx);

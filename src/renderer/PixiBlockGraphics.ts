@@ -11,7 +11,7 @@
  * block's Graphics for zero per-frame text rendering cost.
  */
 
-import { Graphics, Sprite, type Texture } from 'pixi.js';
+import { Graphics, Sprite, Text, TextStyle, type Texture } from 'pixi.js';
 import { GlowFilter } from 'pixi-filters';
 import type { TxBlock } from '../entities/TxBlock';
 import { GameEventType } from '../net/types';
@@ -35,9 +35,15 @@ const EVENT_ICONS: Record<number, string> = {
 
 const CORNER_RADIUS = 5;
 
+/** Font style for #N label — bold 9px monospace, white. */
+const LABEL_FONT = 'bold 9px monospace';
+const LABEL_FILL = '#ffffff';
+
 export interface BlockGraphicsOptions {
   enableGlow?: boolean;
   iconTexture?: Texture;
+  /** Transaction index. When > 0, a `#N` Text label is rendered left-aligned. */
+  txIndex?: number;
 }
 
 /**
@@ -76,12 +82,31 @@ export function createBlockGraphics(
     }
   }
 
+  // ── #N label (only when txIndex > 0) ──
+  const txIndex = options?.txIndex ?? 0;
+  if (txIndex > 0) {
+    const label = new Text({
+      text: `#${txIndex}`,
+      style: new TextStyle({
+        fontFamily: 'monospace',
+        fontWeight: 'bold',
+        fontSize: 9,
+        fill: LABEL_FILL,
+      }),
+    });
+    label.anchor.set(0, 0.5); // left-align, vertical-center
+    label.position.set(6, block.height / 2);
+    gfx.addChild(label);
+  }
+
   // ── Icon sprite child ──
   const iconTexture = options?.iconTexture;
   if (iconTexture) {
     const sprite = new Sprite(iconTexture);
     sprite.anchor.set(0.5, 0.5);
-    sprite.position.set(block.width / 2, block.height / 2);
+    // Shift icon to right side when label is present, otherwise center
+    const spriteX = txIndex > 0 ? block.width - 14 : block.width / 2;
+    sprite.position.set(spriteX, block.height / 2);
     gfx.addChild(sprite);
   }
 

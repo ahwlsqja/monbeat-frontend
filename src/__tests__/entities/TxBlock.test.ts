@@ -240,6 +240,39 @@ describe('TxBlock', () => {
     });
   });
 
+  // ─── txIndex property ────────────────────────────────────────────
+  describe('txIndex', () => {
+    it('should default to 0 when no txIndex passed', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      expect(block.txIndex).toBe(0);
+    });
+
+    it('should accept txIndex as 5th parameter', () => {
+      const block = new TxBlock();
+      block.init(1, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.TxCommit, 42);
+      expect(block.txIndex).toBe(42);
+    });
+
+    it('should reset txIndex to 0', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.TxCommit, 99);
+      expect(block.txIndex).toBe(99);
+      block.reset();
+      expect(block.txIndex).toBe(0);
+    });
+
+    it('should allow re-init with different txIndex after reset', () => {
+      const block = new TxBlock();
+      block.init(0, CANVAS_WIDTH, CANVAS_HEIGHT, undefined, 5);
+      expect(block.txIndex).toBe(5);
+      block.reset();
+      block.init(1, CANVAS_WIDTH, CANVAS_HEIGHT, GameEventType.Conflict, 10);
+      expect(block.txIndex).toBe(10);
+      expect(block.eventType).toBe(GameEventType.Conflict);
+    });
+  });
+
   // ─── Animation State ───────────────────────────────────────────────
   describe('animation state — shakePhase (ReExecution)', () => {
     it('should accumulate shakePhase for ReExecution blocks', () => {

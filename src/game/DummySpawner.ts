@@ -12,6 +12,8 @@ import type { TxBlock } from '../entities/TxBlock';
 export class DummySpawner {
   private elapsed = 0;
   private spawnInterval: number;
+  /** Sequential counter for demo-mode txIndex labels. */
+  private nextTxIndex = 0;
 
   /** Optional injectable RNG for deterministic tests (returns 0-1) */
   private rng: () => number;
@@ -46,7 +48,8 @@ export class DummySpawner {
   ): void {
     const block = pool.acquire();
     const lane = (this.rng() * 4) | 0; // 0-3
-    block.init(lane, canvasWidth, canvasHeight);
+    block.init(lane, canvasWidth, canvasHeight, undefined, this.nextTxIndex);
+    this.nextTxIndex++;
   }
 
   private nextInterval(): number {
@@ -56,6 +59,7 @@ export class DummySpawner {
   /** Reset for reuse */
   resetState(): void {
     this.elapsed = 0;
+    this.nextTxIndex = 0;
     this.spawnInterval = this.nextInterval();
   }
 }

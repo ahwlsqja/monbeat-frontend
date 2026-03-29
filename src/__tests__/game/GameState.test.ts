@@ -61,6 +61,20 @@ describe('GameState', () => {
       expect(gs.activeTxBlocks.size).toBeGreaterThan(0);
     });
 
+    it('should assign sequential txIndex in demo mode via DummySpawner', () => {
+      const gs = new GameState(undefined, () => 0.5);
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+      // rng=0.5 → spawn interval = 300ms. 60 frames × 16ms = 960ms → 3 spawns
+      for (let i = 0; i < 60; i++) gs.update(0.016);
+      const blocks = [...gs.activeTxBlocks];
+      expect(blocks.length).toBeGreaterThan(1);
+      // Each block should have a unique sequential txIndex starting from 0
+      const indices = blocks.map(b => b.txIndex).sort((a, b) => a - b);
+      for (let i = 0; i < indices.length; i++) {
+        expect(indices[i]).toBe(i);
+      }
+    });
+
     it('should release blocks at commit zone', () => {
       const gs = new GameState(undefined, () => 0.5);
       gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
@@ -221,6 +235,39 @@ describe('GameState', () => {
       // Let block fall to commit zone
       for (let i = 0; i < 50; i++) gs.update(0.1);
       expect(gs.isFullyDrained).toBe(true);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // txIndex forwarding
+  // -----------------------------------------------------------------------
+
+  describe('txIndex forwarding', () => {
+    it('should forward event.txIndex to spawned block', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      gs.pushEvent(makeEvent({ lane: 0, timestamp: 0.0, txIndex: 7 }));
+      gs.finalizeBatches();
+      gs.update(0.01);
+
+      expect(gs.activeTxBlocks.size).toBe(1);
+      const block = [...gs.activeTxBlocks][0];
+      expect(block.txIndex).toBe(7);
+    });
+
+    it('should forward distinct txIndex values to each block in a batch', () => {
+      const gs = new GameState();
+      gs.setDimensions(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      gs.pushEvent(makeEvent({ lane: 0, timestamp: 0.0, txIndex: 0 }));
+      gs.pushEvent(makeEvent({ lane: 1, timestamp: 0.01, txIndex: 1 }));
+      gs.pushEvent(makeEvent({ lane: 2, timestamp: 0.02, txIndex: 2 }));
+      gs.finalizeBatches();
+      gs.update(0.01);
+
+      const indices = [...gs.activeTxBlocks].map(b => b.txIndex).sort();
+      expect(indices).toEqual([0, 1, 2]);
     });
   });
 

@@ -187,7 +187,7 @@ export class GameState {
     }
 
     const block = this.txPool.acquire();
-    block.init(event.lane, this.canvasWidth, this.canvasHeight, event.type);
+    block.init(event.lane, this.canvasWidth, this.canvasHeight, event.type, event.txIndex);
     // Store event reference on block for audio on hit
     (block as any)._event = event;
     this.onBlockSpawned?.(event);

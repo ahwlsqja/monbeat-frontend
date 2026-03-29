@@ -28,6 +28,8 @@ export class TxBlock implements Poolable {
   commitZoneY = 0;
   /** Event type discriminant (1-5). Defaults to TxCommit. */
   eventType: GameEventTypeT = GameEventType.TxCommit;
+  /** Transaction index within the block (0-based). Displayed as #N label. */
+  txIndex = 0;
 
   // ── Animation state ──
   /** Accumulated shake phase (radians) for ReExecution blocks. 15 Hz oscillation. */
@@ -40,7 +42,7 @@ export class TxBlock implements Poolable {
    * Optional eventType derives color from EVENT_COLORS map.
    * Called after acquire() from the pool.
    */
-  init(lane: number, canvasWidth: number, canvasHeight: number, eventType?: GameEventTypeT): void {
+  init(lane: number, canvasWidth: number, canvasHeight: number, eventType?: GameEventTypeT, txIndex?: number): void {
     const laneWidth = canvasWidth / 4;
     this.lane = lane;
     this.width = laneWidth * 0.6;
@@ -52,6 +54,7 @@ export class TxBlock implements Poolable {
     this.state = 'falling';
     this.eventType = eventType ?? GameEventType.TxCommit;
     this.color = EVENT_COLORS[this.eventType] ?? DEFAULT_COLOR;
+    this.txIndex = txIndex ?? 0;
   }
 
   /**
@@ -96,5 +99,6 @@ export class TxBlock implements Poolable {
     this.commitZoneY = 0;
     this.shakePhase = 0;
     this.flashElapsed = 0;
+    this.txIndex = 0;
   }
 }

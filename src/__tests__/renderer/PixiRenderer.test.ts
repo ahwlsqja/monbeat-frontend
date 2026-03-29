@@ -231,6 +231,7 @@ function makeTxBlock(overrides?: Partial<TxBlock>): TxBlock {
     speed: 200,
     commitZoneY: 510,
     eventType: GameEventType.TxCommit,
+    txIndex: 0,
     shakePhase: 0,
     flashElapsed: 0,
     init: vi.fn(),
@@ -398,6 +399,29 @@ describe('PixiRenderer', () => {
     expect(sprite.anchor.set).toHaveBeenCalledWith(0.5, 0.5);
     // Sprite positioned at block center
     expect(sprite.position.set).toHaveBeenCalledWith(60, 14); // 120/2, 28/2
+  });
+
+  it('addBlock passes txIndex to createBlockGraphics — label and shifted icon', async () => {
+    await renderer.init(container, 800, 600);
+
+    const block = makeTxBlock({
+      eventType: GameEventType.Conflict,
+      color: EVENT_COLORS[GameEventType.Conflict],
+      width: 120,
+      height: 28,
+      txIndex: 4,
+    });
+
+    renderer.addBlock(block);
+
+    const gfx = renderer._gameLayer.children[0] as InstanceType<typeof mockState.MockGraphics>;
+    // Should have Text label + Sprite = 2 children
+    expect(gfx.children.length).toBe(2);
+    const textChild = gfx.children.find((c: any) => c instanceof mockState.MockText) as InstanceType<typeof mockState.MockText>;
+    expect(textChild).toBeDefined();
+    expect(textChild.text).toBe('#4');
+    const sprite = gfx.children.find((c: any) => c instanceof mockState.MockSprite) as InstanceType<typeof mockState.MockSprite>;
+    expect(sprite.position.set).toHaveBeenCalledWith(106, 14); // width - 14 = 106
   });
 
   it('addBlock with enableGlow=true applies GlowFilter to all non-TxCommit types', async () => {
@@ -915,5 +939,102 @@ describe('PixiBlockGraphics', () => {
 
     const flash = (gfx as any).__flashOverlay;
     expect(flash.alpha).toBe(0);
+  });
+
+  // ── txIndex #N label rendering tests ──────────────────────────────────
+
+  it('createBlockGraphics adds #N Text child when txIndex > 0', async () => {
+    const { createBlockGraphics } = await import('../../renderer/PixiBlockGraphics');
+    const block = makeTxBlock({ width: 120, height: 28, txIndex: 5 });
+
+    const gfx = createBlockGraphics(block, { txIndex: 5 }) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    // Find the Text child by checking for .text property
+    const textChild = gfx.children.find((c: any) => c instanceof mockState.MockText) as InstanceType<typeof mockState.MockText>;
+    expect(textChild).toBeDefined();
+    expect(textChild.text).toBe('#5');
+    // Left-aligned, vertical-center
+    expect(textChild.anchor.set).toHaveBeenCalledWith(0, 0.5);
+    expect(textChild.position.set).toHaveBeenCalledWith(6, 14); // 6px left, height/2
+  });
+
+  it('createBlockGraphics does NOT add #N Text child when txIndex is 0', async () => {
+    const { createBlockGraphics } = await import('../../renderer/PixiBlockGraphics');
+    const block = makeTxBlock({ width: 120, height: 28, txIndex: 0 });
+
+    const gfx = createBlockGraphics(block, { txIndex: 0 }) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    const textChild = gfx.children.find((c: any) => c instanceof mockState.MockText);
+    expect(textChild).toBeUndefined();
+  });
+
+  it('createBlockGraphics does NOT add #N Text child when txIndex option is omitted', async () => {
+    const { createBlockGraphics } = await import('../../renderer/PixiBlockGraphics');
+    const block = makeTxBlock({ width: 120, height: 28 });
+
+    const gfx = createBlockGraphics(block) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    const textChild = gfx.children.find((c: any) => c instanceof mockState.MockText);
+    expect(textChild).toBeUndefined();
+  });
+
+  it('createBlockGraphics shifts icon sprite to right side when txIndex > 0', async () => {
+    const { createBlockGraphics } = await import('../../renderer/PixiBlockGraphics');
+    const fakeTexture = { __isTexture: true };
+    const block = makeTxBlock({ width: 120, height: 28, txIndex: 3 });
+
+    const gfx = createBlockGraphics(block, {
+      iconTexture: fakeTexture as unknown as import('pixi.js').Texture,
+      txIndex: 3,
+    }) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    // children: Text label + Sprite
+    expect(gfx.children.length).toBe(2);
+    const sprite = gfx.children.find((c: any) => c instanceof mockState.MockSprite) as InstanceType<typeof mockState.MockSprite>;
+    expect(sprite).toBeDefined();
+    // Shifted to right: width - 14 = 106, height/2 = 14
+    expect(sprite.position.set).toHaveBeenCalledWith(106, 14);
+  });
+
+  it('createBlockGraphics keeps icon sprite centered when txIndex is 0', async () => {
+    const { createBlockGraphics } = await import('../../renderer/PixiBlockGraphics');
+    const fakeTexture = { __isTexture: true };
+    const block = makeTxBlock({ width: 120, height: 28, txIndex: 0 });
+
+    const gfx = createBlockGraphics(block, {
+      iconTexture: fakeTexture as unknown as import('pixi.js').Texture,
+      txIndex: 0,
+    }) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    // Only sprite child, no text
+    expect(gfx.children.length).toBe(1);
+    const sprite = gfx.children[0] as InstanceType<typeof mockState.MockSprite>;
+    // Centered: 120/2 = 60, 28/2 = 14
+    expect(sprite.position.set).toHaveBeenCalledWith(60, 14);
+  });
+
+  it('createBlockGraphics renders label + icon + flash overlay together for ReExecutionResolved with txIndex', async () => {
+    const { createBlockGraphics } = await import('../../renderer/PixiBlockGraphics');
+    const fakeTexture = { __isTexture: true };
+    const block = makeTxBlock({
+      width: 120,
+      height: 28,
+      txIndex: 7,
+      eventType: GameEventType.ReExecutionResolved,
+      color: EVENT_COLORS[GameEventType.ReExecutionResolved],
+    });
+
+    const gfx = createBlockGraphics(block, {
+      iconTexture: fakeTexture as unknown as import('pixi.js').Texture,
+      txIndex: 7,
+    }) as unknown as InstanceType<typeof mockState.MockGraphics>;
+
+    // children: Text label + Sprite + flash overlay = 3
+    expect(gfx.children.length).toBe(3);
+    const textChild = gfx.children.find((c: any) => c instanceof mockState.MockText) as InstanceType<typeof mockState.MockText>;
+    expect(textChild.text).toBe('#7');
+    const sprite = gfx.children.find((c: any) => c instanceof mockState.MockSprite) as InstanceType<typeof mockState.MockSprite>;
+    expect(sprite.position.set).toHaveBeenCalledWith(106, 14); // shifted right
+    expect((gfx as any).__flashOverlay).toBeDefined();
   });
 });
