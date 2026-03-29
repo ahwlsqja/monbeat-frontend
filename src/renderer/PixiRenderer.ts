@@ -23,15 +23,15 @@ import type { GameEventType as GameEventTypeT } from '../net/types';
 import { ParticleSystem } from '../effects/ParticleSystem';
 import { TrailSystem } from '../effects/TrailSystem';
 
-// ── Theme constants (match BackgroundRenderer.ts) ──────────────────────────
-const BG_COLOR = '#0a0a0f';
-const LANE_LINE_COLOR = 0xffffff;
-const LANE_LINE_ALPHA = 0.06;
-const COMMIT_ZONE_COLOR = 0x4ade80;
-const COMMIT_ZONE_ALPHA = 0.3;
-const COMMIT_LINE_ALPHA = 0.8;
-const LABEL_COLOR = '#666688';
-const COMMIT_LABEL_COLOR = 'rgba(74, 222, 128, 0.4)';
+// ── Theme constants — Monad purple palette ──────────────────────────────
+const BG_COLOR = '#0d0a1a';
+const LANE_LINE_COLOR = 0x836ef9;
+const LANE_LINE_ALPHA = 0.10;
+const COMMIT_ZONE_COLOR = 0x836ef9;
+const COMMIT_ZONE_ALPHA = 0.25;
+const COMMIT_LINE_ALPHA = 0.7;
+const LABEL_COLOR = '#7c6ebf';
+const COMMIT_LABEL_COLOR = 'rgba(131, 110, 249, 0.5)';
 
 // ── Icon texture constants ─────────────────────────────────────────────────
 const ICON_SIZE = 24;

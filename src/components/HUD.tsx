@@ -34,7 +34,7 @@ export default function HUD({ perfMonitor }: { perfMonitor: PerfMonitor }) {
         borderRadius: 4,
         fontFamily: 'monospace',
         fontSize: 13,
-        color: '#88ff88',
+        color: '#b8a5ff',
         zIndex: 10,
         pointerEvents: 'none',
         userSelect: 'none',

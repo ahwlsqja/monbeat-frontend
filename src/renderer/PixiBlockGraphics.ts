@@ -35,8 +35,8 @@ const EVENT_ICONS: Record<number, string> = {
 
 const CORNER_RADIUS = 5;
 
-/** Font style for #N label — bold 9px monospace, white. */
-const LABEL_FONT = 'bold 9px monospace';
+/** Font style for #N label — bold 13px monospace, white. */
+const LABEL_FONT = 'bold 13px monospace';
 const LABEL_FILL = '#ffffff';
 
 export interface BlockGraphicsOptions {
@@ -90,7 +90,7 @@ export function createBlockGraphics(
       style: new TextStyle({
         fontFamily: 'monospace',
         fontWeight: 'bold',
-        fontSize: 9,
+        fontSize: 13,
         fill: LABEL_FILL,
       }),
     });

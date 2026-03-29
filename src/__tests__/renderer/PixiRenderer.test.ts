@@ -288,7 +288,7 @@ describe('PixiRenderer', () => {
 
     expect(mockState.appInit).toHaveBeenCalledWith(
       expect.objectContaining({
-        background: '#0a0a0f',
+        background: '#0d0a1a',
         width: 800,
         height: 600,
         autoDensity: true,

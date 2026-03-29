@@ -91,7 +91,7 @@ export default function SimulationPanel() {
         width: '100vw',
         height: '100vh',
         overflow: 'hidden',
-        background: '#0a0a0f',
+        background: '#0d0a1a',
       }}
     >
       {/* ── Input phase ── */}
@@ -129,8 +129,8 @@ export default function SimulationPanel() {
               maxWidth: 640,
               height: 320,
               padding: 16,
-              background: 'rgba(15, 15, 25, 0.9)',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
+              background: 'rgba(13, 10, 26, 0.9)',
+              border: '1px solid rgba(131, 110, 249, 0.25)',
               borderRadius: 8,
               fontFamily: 'monospace',
               fontSize: 13,
@@ -146,8 +146,8 @@ export default function SimulationPanel() {
             disabled={!source.trim()}
             style={{
               padding: '12px 36px',
-              background: source.trim() ? '#4ade80' : '#333',
-              color: source.trim() ? '#0a0a0f' : '#666',
+              background: source.trim() ? '#836ef9' : '#333',
+              color: source.trim() ? '#ffffff' : '#666',
               border: 'none',
               borderRadius: 8,
               fontFamily: 'monospace',

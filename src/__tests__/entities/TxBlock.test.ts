@@ -46,7 +46,7 @@ describe('TxBlock', () => {
 
       expect(block.speed).toBe(200);
       expect(block.state).toBe('falling');
-      expect(block.color).toBe('#4ade80'); // EVENT_COLORS[TxCommit]
+      expect(block.color).toBe('#836ef9'); // EVENT_COLORS[TxCommit]
       expect(block.eventType).toBe(1); // GameEventType.TxCommit
     });
   });
@@ -142,7 +142,7 @@ describe('TxBlock', () => {
       expect(block.height).toBe(28);
       expect(block.lane).toBe(0);
       expect(block.state).toBe('falling');
-      expect(block.color).toBe('#4ade80'); // EVENT_COLORS[TxCommit]
+      expect(block.color).toBe('#836ef9'); // EVENT_COLORS[TxCommit]
       expect(block.speed).toBe(200);
       expect(block.commitZoneY).toBe(0);
       expect(block.shakePhase).toBe(0);

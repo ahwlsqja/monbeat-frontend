@@ -305,7 +305,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
         width: '100vw',
         height: '100vh',
         overflow: 'hidden',
-        background: '#0a0a0f',
+        background: '#0d0a1a',
       }}
     >
       {/* PixiJS appends its canvas to containerRef — no manual <canvas> elements */}
@@ -328,8 +328,8 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
             onClick={handleSimulate}
             style={{
               padding: '10px 24px',
-              background: '#4ade80',
-              color: '#0a0a0f',
+              background: '#836ef9',
+              color: '#ffffff',
               border: 'none',
               borderRadius: 6,
               fontFamily: 'monospace',
