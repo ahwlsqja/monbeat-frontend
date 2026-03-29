@@ -68,6 +68,9 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
   // Pending completion: set when WS sends completion, cleared when all blocks drain
   const pendingCompletionRef = useRef<CompletionStats | null>(null);
 
+  // PixiJS init promise — handleSimulate awaits this before triggering
+  const pixiReadyRef = useRef<Promise<void>>(Promise.resolve());
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -89,6 +92,8 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       if (destroyed) { pixiRenderer.destroy(); return; }
       pixiRenderer.drawBackground(width || 800, height || 600);
     })();
+
+    pixiReadyRef.current = initPromise;
 
     const gameState = new GameState();
     gameState.setDimensions(container.clientWidth || 800, container.clientHeight || 600);
@@ -231,6 +236,9 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     const socket = socketRef.current;
     const gs = gameStateRef.current;
     if (!socket || socket.state !== 'connected' || !gs) return;
+
+    // Wait for PixiJS to finish initializing before sending simulate
+    await pixiReadyRef.current;
 
     setWsError(null);
 
