@@ -67,6 +67,8 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
 
   // Pending completion: set when WS sends completion, cleared when all blocks drain
   const pendingCompletionRef = useRef<CompletionStats | null>(null);
+  // Minimum display time after completion — ensures blocks are visible before results
+  const completionTimeRef = useRef<number>(0);
 
   // PixiJS init promise — handleSimulate awaits this before triggering
   const pixiReadyRef = useRef<Promise<void>>(Promise.resolve());
@@ -137,11 +139,15 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       pixiRenderer.updateEffects(dtSec);
       // After all WS events have been received (pendingCompletion set),
       // wait for event queue + active blocks to fully drain before firing onComplete.
+      // Minimum 3 seconds after completion to let blocks fall and be visible.
       if (pendingCompletionRef.current && gameState.isFullyDrained) {
-        const stats = pendingCompletionRef.current;
-        pendingCompletionRef.current = null;
-        audioEngineRef.current?.stopBGM();
-        onCompleteRef.current?.(stats);
+        const elapsed = (performance.now() - completionTimeRef.current) / 1000;
+        if (elapsed >= 3) {
+          const stats = pendingCompletionRef.current;
+          pendingCompletionRef.current = null;
+          audioEngineRef.current?.stopBGM();
+          onCompleteRef.current?.(stats);
+        }
       }
     };
 
@@ -179,6 +185,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
         completionStatsRef.current = stats;
         gameState.finalizeBatches();
         pendingCompletionRef.current = stats;
+        completionTimeRef.current = performance.now();
       },
       onError: (msg) => {
         console.warn('[MonBeat WS]', msg);
@@ -273,7 +280,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     completionStatsRef.current = null;
     pendingCompletionRef.current = null;
 
-    socket.simulate(source, 3);
+    socket.simulate(source, 5);
   }, [audioEnabled, source]);
 
   // Auto-play: trigger simulation when WS connects and autoPlay is set
