@@ -68,7 +68,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
   // Pending completion: set when WS sends completion, cleared when all blocks drain
   const pendingCompletionRef = useRef<CompletionStats | null>(null);
   // Minimum display time after completion — ensures blocks are visible before results
-  const completionTimeRef = useRef<number>(0);
+  const completionTimeRef = useRef<number>(Infinity);
 
   // PixiJS init gate — handleSimulate awaits this before triggering.
   // Resolved inside the main useEffect after PixiJS init completes.
@@ -288,6 +288,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     gs.mode = 'ws';
     completionStatsRef.current = null;
     pendingCompletionRef.current = null;
+    completionTimeRef.current = Infinity;
 
     socket.simulate(source, 5);
   }, [audioEnabled, source]);
