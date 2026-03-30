@@ -150,26 +150,14 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       pixiRenderer.updateEffects(dtSec);
       // After all WS events have been received (pendingCompletion set),
       // wait for event queue + active blocks to fully drain before firing onComplete.
-      // Enforce minimum 5 seconds of visible gameplay from simulate start.
       if (pendingCompletionRef.current && gameState.isFullyDrained && !completionScheduledRef.current) {
         completionScheduledRef.current = true;
         const stats = pendingCompletionRef.current;
         pendingCompletionRef.current = null;
-        
-        const sinceStart = performance.now() - simulateStartRef.current;
-        const remainMs = Math.max(0, 5000 - sinceStart);
-
-        if (remainMs <= 0) {
-          audioEngineRef.current?.stopBGM();
-          onCompleteRef.current?.(stats);
-        } else {
-          // Keep demo blocks falling during the delay
-          gameState.mode = 'demo';
-          setTimeout(() => {
-            audioEngineRef.current?.stopBGM();
-            onCompleteRef.current?.(stats);
-          }, remainMs);
-        }
+        audioEngineRef.current?.stopBGM();
+        // Switch to demo mode so blocks keep falling while SimulationPanel delays results
+        gameState.mode = 'demo';
+        onCompleteRef.current?.(stats);
       }
     };
 

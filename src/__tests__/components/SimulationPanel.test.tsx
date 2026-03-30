@@ -93,26 +93,33 @@ describe('SimulationPanel', () => {
     expect(screen.getByTestId('source-input')).toBeTruthy();
   });
 
-  it('transitions from playing → results when onComplete fires', () => {
+  it('transitions from playing → results when onComplete fires', async () => {
+    vi.useFakeTimers();
     render(<SimulationPanel />);
     // go to playing
     fireEvent.click(screen.getByTestId('btn-play'));
     // trigger onComplete from stub
     fireEvent.click(screen.getByTestId('trigger-complete'));
+    // advance timers past the 6s delay
+    await act(async () => { vi.advanceTimersByTime(7000); });
     // results phase
     expect(screen.getByTestId('result-summary')).toBeTruthy();
     expect(screen.getByText('Simulation Complete')).toBeTruthy();
+    vi.useRealTimers();
   });
 
-  it('Play Again resets back to input phase', () => {
+  it('Play Again resets back to input phase', async () => {
+    vi.useFakeTimers();
     render(<SimulationPanel />);
     fireEvent.click(screen.getByTestId('btn-play'));
     fireEvent.click(screen.getByTestId('trigger-complete'));
+    await act(async () => { vi.advanceTimersByTime(7000); });
     // now in results — click Play Again
     fireEvent.click(screen.getByTestId('btn-play-again'));
     // back to input
     expect(screen.getByTestId('source-input')).toBeTruthy();
     expect(screen.getByTestId('btn-play')).toBeTruthy();
+    vi.useRealTimers();
   });
 
   it('allows editing source text', () => {

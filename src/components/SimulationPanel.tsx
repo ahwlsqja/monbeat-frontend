@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { CompletionStats } from '../net/types';
 import ErrorBoundary from './ErrorBoundary';
@@ -69,14 +69,22 @@ export default function SimulationPanel() {
   const [stats, setStats] = useState<CompletionStats | null>(null);
   const [playKey, setPlayKey] = useState(0);
 
+  const playStartRef = useRef<number>(0);
+
   const handlePlay = useCallback(() => {
     if (!source.trim()) return;
+    playStartRef.current = performance.now();
     setPhase('playing');
   }, [source]);
 
   const handleComplete = useCallback((completionStats: CompletionStats) => {
-    setStats(completionStats);
-    setPhase('results');
+    const elapsed = performance.now() - playStartRef.current;
+    const remainMs = Math.max(0, 6000 - elapsed);
+    
+    setTimeout(() => {
+      setStats(completionStats);
+      setPhase('results');
+    }, remainMs);
   }, []);
 
   const handlePlayAgain = useCallback(() => {
