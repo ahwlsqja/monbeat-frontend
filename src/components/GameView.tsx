@@ -151,15 +151,22 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       // Enforce minimum 5 seconds of visible gameplay from simulate start.
       if (pendingCompletionRef.current && gameState.isFullyDrained) {
         const stats = pendingCompletionRef.current;
-        pendingCompletionRef.current = null;
+        pendingCompletionRef.current = null; // only fire once
         
         const sinceStart = performance.now() - simulateStartRef.current;
         const remainMs = Math.max(0, 5000 - sinceStart);
-        
-        setTimeout(() => {
+
+        if (remainMs <= 0) {
           audioEngineRef.current?.stopBGM();
           onCompleteRef.current?.(stats);
-        }, remainMs);
+        } else {
+          // Schedule delayed completion — keep game loop running with demo blocks
+          gameState.mode = 'demo';
+          setTimeout(() => {
+            audioEngineRef.current?.stopBGM();
+            onCompleteRef.current?.(stats);
+          }, remainMs);
+        }
       }
     };
 
