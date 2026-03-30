@@ -148,17 +148,18 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       pixiRenderer.updateEffects(dtSec);
       // After all WS events have been received (pendingCompletion set),
       // wait for event queue + active blocks to fully drain before firing onComplete.
-      // Two guards: (1) minimum 3s after WS completion, (2) minimum 5s after simulate start.
+      // Enforce minimum 5 seconds of visible gameplay from simulate start.
       if (pendingCompletionRef.current && gameState.isFullyDrained) {
-        const now = performance.now();
-        const sinceCompletion = (now - completionTimeRef.current) / 1000;
-        const sinceStart = (now - simulateStartRef.current) / 1000;
-        if (sinceCompletion >= 3 && sinceStart >= 5) {
-          const stats = pendingCompletionRef.current;
-          pendingCompletionRef.current = null;
+        const stats = pendingCompletionRef.current;
+        pendingCompletionRef.current = null;
+        
+        const sinceStart = performance.now() - simulateStartRef.current;
+        const remainMs = Math.max(0, 5000 - sinceStart);
+        
+        setTimeout(() => {
           audioEngineRef.current?.stopBGM();
           onCompleteRef.current?.(stats);
-        }
+        }, remainMs);
       }
     };
 
