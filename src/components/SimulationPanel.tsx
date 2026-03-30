@@ -95,9 +95,7 @@ export default function SimulationPanel() {
   }, []);
 
   const handlePlayAgain = useCallback(() => {
-    setStats(null);
-    setPlayKey(k => k + 1);
-    setPhase('input');
+    window.location.reload();
   }, []);
 
   return (
