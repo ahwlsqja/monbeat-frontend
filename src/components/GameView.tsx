@@ -69,6 +69,8 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
   const pendingCompletionRef = useRef<CompletionStats | null>(null);
   // Minimum display time after completion — ensures blocks are visible before results
   const completionTimeRef = useRef<number>(Infinity);
+  // Simulation start time — enforce minimum viewing duration
+  const simulateStartRef = useRef<number>(Infinity);
 
   // PixiJS init gate — handleSimulate awaits this before triggering.
   // Resolved inside the main useEffect after PixiJS init completes.
@@ -146,10 +148,12 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       pixiRenderer.updateEffects(dtSec);
       // After all WS events have been received (pendingCompletion set),
       // wait for event queue + active blocks to fully drain before firing onComplete.
-      // Minimum 3 seconds after completion to let blocks fall and be visible.
+      // Two guards: (1) minimum 3s after WS completion, (2) minimum 5s after simulate start.
       if (pendingCompletionRef.current && gameState.isFullyDrained) {
-        const elapsed = (performance.now() - completionTimeRef.current) / 1000;
-        if (elapsed >= 3) {
+        const now = performance.now();
+        const sinceCompletion = (now - completionTimeRef.current) / 1000;
+        const sinceStart = (now - simulateStartRef.current) / 1000;
+        if (sinceCompletion >= 3 && sinceStart >= 5) {
           const stats = pendingCompletionRef.current;
           pendingCompletionRef.current = null;
           audioEngineRef.current?.stopBGM();
@@ -289,6 +293,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     completionStatsRef.current = null;
     pendingCompletionRef.current = null;
     completionTimeRef.current = Infinity;
+    simulateStartRef.current = performance.now();
 
     socket.simulate(source, 5);
   }, [audioEnabled, source]);
