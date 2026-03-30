@@ -70,9 +70,15 @@ export default function SimulationPanel() {
   const [playKey, setPlayKey] = useState(0);
 
   const playStartRef = useRef<number>(0);
+  const completeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handlePlay = useCallback(() => {
     if (!source.trim()) return;
+    // Cancel any pending completion from previous round
+    if (completeTimerRef.current) {
+      clearTimeout(completeTimerRef.current);
+      completeTimerRef.current = null;
+    }
     playStartRef.current = performance.now();
     setPhase('playing');
   }, [source]);
@@ -81,7 +87,8 @@ export default function SimulationPanel() {
     const elapsed = performance.now() - playStartRef.current;
     const remainMs = Math.max(0, 6000 - elapsed);
     
-    setTimeout(() => {
+    completeTimerRef.current = setTimeout(() => {
+      completeTimerRef.current = null;
       setStats(completionStats);
       setPhase('results');
     }, remainMs);
