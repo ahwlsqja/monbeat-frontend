@@ -71,6 +71,8 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
   const completionTimeRef = useRef<number>(Infinity);
   // Simulation start time — enforce minimum viewing duration
   const simulateStartRef = useRef<number>(Infinity);
+  // Whether completion has been scheduled (prevents multiple setTimeout calls)
+  const completionScheduledRef = useRef(false);
 
   // PixiJS init gate — handleSimulate awaits this before triggering.
   // Resolved inside the main useEffect after PixiJS init completes.
@@ -149,9 +151,10 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
       // After all WS events have been received (pendingCompletion set),
       // wait for event queue + active blocks to fully drain before firing onComplete.
       // Enforce minimum 5 seconds of visible gameplay from simulate start.
-      if (pendingCompletionRef.current && gameState.isFullyDrained) {
+      if (pendingCompletionRef.current && gameState.isFullyDrained && !completionScheduledRef.current) {
+        completionScheduledRef.current = true;
         const stats = pendingCompletionRef.current;
-        pendingCompletionRef.current = null; // only fire once
+        pendingCompletionRef.current = null;
         
         const sinceStart = performance.now() - simulateStartRef.current;
         const remainMs = Math.max(0, 5000 - sinceStart);
@@ -160,7 +163,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
           audioEngineRef.current?.stopBGM();
           onCompleteRef.current?.(stats);
         } else {
-          // Schedule delayed completion — keep game loop running with demo blocks
+          // Keep demo blocks falling during the delay
           gameState.mode = 'demo';
           setTimeout(() => {
             audioEngineRef.current?.stopBGM();
@@ -302,6 +305,7 @@ export default function GameView({ source, onComplete, autoPlay }: GameViewProps
     pendingCompletionRef.current = null;
     completionTimeRef.current = Infinity;
     simulateStartRef.current = performance.now();
+    completionScheduledRef.current = false;
 
     socket.simulate(source, 5);
   }, [audioEnabled, source]);
